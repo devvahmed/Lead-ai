@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ClientCard from '@/components/clients/ClientCard';
+import { getAuthToken } from '@/lib/auth';
 
 interface Client {
   id: string;
@@ -94,7 +95,10 @@ export default function ClientsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('/api/clients');
+        const token = getAuthToken();
+        const res = await fetch('/api/clients', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to load clients');
         setClients(data.clients || []);

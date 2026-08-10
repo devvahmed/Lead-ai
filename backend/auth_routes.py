@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import time
 import urllib.request
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, status, Header
@@ -23,6 +25,10 @@ security = HTTPBearer()
 
 # In-memory cache for company-specific suggested industries
 _SUGGESTED_INDUSTRIES_CACHE = {}
+
+# ─── Industry suggestions cache: {company_id: (timestamp, [industry_tags])} ─────────────
+# Results are cached for 30 min per company so fresh profile changes are reflected
+_SUGGEST_INDUSTRIES_CACHE_TTL = 1800  # 30 minutes
 
 # ─── Pydantic Schemas ──────────────────────────────────────────────────────────
 
@@ -50,9 +56,18 @@ class CompanyResponse(BaseModel):
     target_customers: Optional[str] = None
     description: Optional[str] = None
     logo_path: Optional[str] = None
+    ai_enriched_profile: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+class CompanyUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    website: Optional[str] = None
+    industry: Optional[str] = None
+    services: Optional[str] = None
+    target_customers: Optional[str] = None
+    description: Optional[str] = None
 
 class AuthTokenResponse(BaseModel):
     access_token: str
@@ -73,12 +88,91 @@ class SuggestedIndustriesResponse(BaseModel):
     company_name: str
     suggested_industries: List[str]
 
+# ─── AI Company Profile Enrichment Helper ────────────────────────────────────
+
+async def enrich_company_profile(
+    company_name: str,
+    website: Optional[str] = None,
+    services: Optional[str] = None,
+    target_customers: Optional[str] = None,
+    description: Optional[str] = None,
+    industry: Optional[str] = None
+) -> str:
+    """
+    Synthesizes a structured AI-enriched company profile combining raw signup form fields
+    and real-time website crawling content. Handles website scrape failures gracefully.
+    """
+    scraped_content = ""
+    evidence_source = "Form fields only"
+
+    clean_url = website.strip() if website else ""
+    if clean_url:
+        if not clean_url.startswith(("http://", "https://")):
+            clean_url = "https://" + clean_url
+        try:
+            from email_outreach import fetch_url_content_with_subpages
+            scraped_text, label = await fetch_url_content_with_subpages(clean_url, timeout=5.0)
+            if scraped_text and len(scraped_text.strip()) > 150:
+                scraped_content = scraped_text[:3500].strip()
+                evidence_source = f"Scraped website ({clean_url}) [{label}]"
+                print(f"[Profile Enrichment] Crawled website '{clean_url}' successfully ({len(scraped_content)} chars)")
+            else:
+                print(f"[Profile Enrichment] Website '{clean_url}' returned thin text — falling back to form inputs")
+        except Exception as e:
+            print(f"[Profile Enrichment Warning] Failed to crawl '{clean_url}': {e} — continuing with form inputs only")
+
+    form_summary = f"""
+Company Name    : {company_name or 'N/A'}
+Website         : {clean_url or 'None'}
+Industry Sector : {industry or 'Not specified'}
+Services/Products: {services or 'Not specified'}
+Target Customers: {target_customers or 'Not specified'}
+Overview        : {description or 'Not specified'}
+"""
+
+    prompt = f"""You are a B2B strategy analyst. Synthesize a structured AI-Enriched Company Profile for '{company_name}'.
+
+=== INPUT SOURCE DATA ===
+Form Fields:
+{form_summary}
+
+Website Evidence ({evidence_source}):
+---
+{scraped_content if scraped_content else '(No website content available)'}
+---
+
+=== INSTRUCTIONS ===
+Generate a comprehensive, structured AI-Enriched Profile in plain text with clear headings:
+
+1. CORE BUSINESS & OFFERINGS: Restate clearly what the company actually manufactures, sells, or provides based on both form input and website evidence.
+2. IDEAL CUSTOMER PROFILE (ICP): Identify the specific target industries, business types, company sizes, and buyer personas that buy from this company.
+3. KEY VALUE PROPOSITIONS & DIFFERENTIATORS: Highlight main competitive advantages, fleet/service capabilities, or unique selling points.
+4. DISCREPANCY & ENHANCEMENT NOTES: Note any additional capabilities found on the website that were missing from the form inputs, or confirm full alignment.
+
+Output a clean, professional profile format. Max 400 words. Do NOT include generic conversational filler."""
+
+    try:
+        from discover import call_ollama
+        enriched_text = call_ollama(
+            prompt=prompt,
+            system_prompt="You are an expert B2B company profiler. Output a structured profile.",
+            temperature=0.2,
+            max_tokens=600,
+            timeout=15.0
+        )
+        if enriched_text and len(enriched_text.strip()) > 50:
+            return enriched_text.strip()
+    except Exception as e:
+        print(f"[Profile Enrichment Ollama Error]: {e}")
+
+    return f"CORE BUSINESS: {services or description or 'B2B Products & Services'}\nIDEAL CUSTOMER PROFILE: {target_customers or 'B2B Clients'}\nVALUE PROPOSITION: High quality solutions in {industry or 'B2B'}."
+
 
 # ─── Auth Endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/signup", response_model=AuthTokenResponse, status_code=status.HTTP_201_CREATED)
-def signup(company_data: CompanySignupRequest, db: Session = Depends(get_auth_db)):
-    """Registers a new Company and returns a JWT access token."""
+async def signup(company_data: CompanySignupRequest, db: Session = Depends(get_auth_db)):
+    """Registers a new Company, generates AI-enriched profile, and returns JWT access token."""
     existing = db.query(Company).filter(Company.email == company_data.email.lower().strip()).first()
     if existing:
         raise HTTPException(
@@ -87,6 +181,17 @@ def signup(company_data: CompanySignupRequest, db: Session = Depends(get_auth_db
         )
 
     hashed_pwd = hash_password(company_data.password)
+
+    # Trigger AI profile enrichment at signup time
+    ai_profile = await enrich_company_profile(
+        company_name=company_data.name.strip(),
+        website=company_data.website,
+        services=company_data.services,
+        target_customers=company_data.target_customers,
+        description=company_data.description,
+        industry=company_data.industry
+    )
+
     new_company = Company(
         name=company_data.name.strip(),
         email=company_data.email.lower().strip(),
@@ -95,7 +200,8 @@ def signup(company_data: CompanySignupRequest, db: Session = Depends(get_auth_db
         industry=company_data.industry.strip() if company_data.industry else None,
         services=company_data.services.strip() if company_data.services else None,
         target_customers=company_data.target_customers.strip() if company_data.target_customers else None,
-        description=company_data.description.strip() if company_data.description else None
+        description=company_data.description.strip() if company_data.description else None,
+        ai_enriched_profile=ai_profile
     )
 
     db.add(new_company)
@@ -146,10 +252,67 @@ def get_current_company(credentials: HTTPAuthorizationCredentials = Depends(secu
     if not company:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Authenticated company profile not found."
+            detail="Authenticated company profile no longer exists in system."
         )
 
-    return CompanyResponse.model_validate(company)
+    return company
+
+
+def get_current_company_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_auth_db)
+) -> Company:
+    """Decodes JWT bearer token if present; falls back to default company (id=1) for dev/guest access."""
+    if credentials and credentials.credentials:
+        payload = decode_access_token(credentials.credentials)
+        if payload and "sub" in payload:
+            try:
+                cid = int(payload["sub"])
+                co = db.query(Company).filter(Company.id == cid).first()
+                if co:
+                    return co
+            except Exception:
+                pass
+    fallback = db.query(Company).first()
+    if fallback:
+        return fallback
+    return Company(id=1, name="Default Company", email="admin@example.com")
+
+
+@router.put("/profile", response_model=CompanyResponse)
+async def update_company_profile(
+    profile_data: CompanyUpdateRequest,
+    current_company: Company = Depends(get_current_company),
+    db: Session = Depends(get_auth_db)
+):
+    """Updates company profile and re-triggers AI profile enrichment."""
+    if profile_data.name is not None:
+        current_company.name = profile_data.name.strip()
+    if profile_data.website is not None:
+        current_company.website = profile_data.website.strip()
+    if profile_data.industry is not None:
+        current_company.industry = profile_data.industry.strip()
+    if profile_data.services is not None:
+        current_company.services = profile_data.services.strip()
+    if profile_data.target_customers is not None:
+        current_company.target_customers = profile_data.target_customers.strip()
+    if profile_data.description is not None:
+        current_company.description = profile_data.description.strip()
+
+    # Re-trigger profile enrichment on profile update
+    ai_profile = await enrich_company_profile(
+        company_name=current_company.name,
+        website=current_company.website,
+        services=current_company.services,
+        target_customers=current_company.target_customers,
+        description=current_company.description,
+        industry=current_company.industry
+    )
+    current_company.ai_enriched_profile = ai_profile
+
+    db.commit()
+    db.refresh(current_company)
+    return CompanyResponse.model_validate(current_company)
 
 
 @router.get("/dashboard-stats", response_model=DashboardStatsResponse)
@@ -167,23 +330,19 @@ def get_suggested_industries_endpoint(current_company: Company = Depends(get_cur
     Caches results per company_id to respect Groq API rate limits.
     """
     company_id = current_company.id
-    if company_id in _SUGGESTED_INDUSTRIES_CACHE:
-        return SuggestedIndustriesResponse(
-            company_id=company_id,
-            company_name=current_company.name,
-            suggested_industries=_SUGGESTED_INDUSTRIES_CACHE[company_id]
-        )
+    cached = _SUGGESTED_INDUSTRIES_CACHE.get(company_id)
+    if cached:
+        cached_time, cached_tags = cached
+        if time.time() - cached_time < _SUGGEST_INDUSTRIES_CACHE_TTL:
+            return SuggestedIndustriesResponse(
+                company_id=company_id,
+                company_name=current_company.name,
+                suggested_industries=cached_tags
+            )
+        else:
+            del _SUGGESTED_INDUSTRIES_CACHE[company_id]  # Expired; discard and re-generate
 
     default_tags = ["Fintech", "Healthcare", "E-Commerce & Retail", "Software & SaaS", "Logistics & Supply Chain", "Industrial Manufacturing"]
-
-    groq_key = os.getenv("GROQ_API_KEY")
-    if not groq_key:
-        print("[Suggest Industries Groq]: GROQ_API_KEY is missing in env")
-        return SuggestedIndustriesResponse(
-            company_id=company_id,
-            company_name=current_company.name,
-            suggested_industries=default_tags
-        )
 
     prompt = f"""
     We are '{current_company.name}', operating in the '{current_company.industry or 'Technology'}' sector.
@@ -196,41 +355,29 @@ def get_suggested_industries_endpoint(current_company: Company = Depends(get_cur
     """
 
     try:
-        req_data = json.dumps({
-            "model": os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": 300,
-            "response_format": {"type": "json_object"}
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=req_data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {groq_key}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClientPlus-AI/1.0"
-            },
-            method="POST"
+        from discover import call_ollama
+        raw_content = call_ollama(
+            prompt=prompt,
+            system_prompt="You are a B2B strategy analyst. Output valid JSON.",
+            temperature=0.2,
+            max_tokens=300,
+            timeout=10.0
         )
-
-        with urllib.request.urlopen(req, timeout=10) as response:
-            resp_body = response.read().decode("utf-8")
-            data = json.loads(resp_body)
-            raw_content = data["choices"][0]["message"]["content"]
+        if raw_content:
+            raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
+            raw_content = re.sub(r'\s*```$', '', raw_content)
             parsed = json.loads(raw_content)
             industries = parsed.get("suggested_industries", default_tags)
             if isinstance(industries, list) and len(industries) > 0:
                 clean_tags = [str(t).strip() for t in industries if isinstance(t, str) and len(t.strip()) > 0][:6]
-                _SUGGESTED_INDUSTRIES_CACHE[company_id] = clean_tags
+                _SUGGESTED_INDUSTRIES_CACHE[company_id] = (time.time(), clean_tags)  # Store with timestamp
                 return SuggestedIndustriesResponse(
                     company_id=company_id,
                     company_name=current_company.name,
                     suggested_industries=clean_tags
                 )
     except Exception as e:
-        print(f"[Suggest Industries Groq Error]: {e}")
+        print(f"[Suggest Industries Ollama Error]: {e}")
 
     return SuggestedIndustriesResponse(
         company_id=company_id,

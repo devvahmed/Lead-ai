@@ -1,29 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 
-function getSupabase() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Supabase not configured');
-  return createClient(url, key);
+function getBackendUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl || envUrl.startsWith('/')) {
+    return 'http://localhost:8000';
+  }
+  return envUrl.replace(/\/$/, '');
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const supabase = getSupabase();
-    
-    // Fetch all saved clients sorted by newest first
-    const { data, error } = await supabase
-      .from('clients')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const authHeader = req.headers.get('authorization') || req.headers.get('Authorization');
+    const backendUrl = `${getBackendUrl()}/api/clients`;
 
-    if (error) {
-      console.error('Supabase fetch error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const res = await fetch(backendUrl, {
+      headers: {
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      return NextResponse.json({ clients: [] });
     }
 
-    return NextResponse.json({ clients: data || [] });
+    const data = await res.json();
+    return NextResponse.json(data);
   } catch (err) {
     console.error('Fetch clients error:', err);
     return NextResponse.json(

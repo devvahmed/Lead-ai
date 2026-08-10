@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { getAuthToken } from '@/lib/auth';
+import { getAuthToken, getSavedCompany } from '@/lib/auth';
 
 
 interface Client {
@@ -24,6 +24,9 @@ interface Client {
   contact_source_url?: string;
   contact_source_label?: string;
   phones?: string;
+  matched_service?: string;
+  match_reason?: string;
+  search_query?: string | null;
 }
 
 interface ContactMeta {
@@ -177,10 +180,25 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [emailGenerating, setEmailGenerating] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailCopied, setEmailCopied] = useState(false);
+  const [pitchType, setPitchType] = useState<'targeted' | 'general'>('general');
+  const [customKeyword, setCustomKeyword] = useState('');
 
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  const [ourCompanyName, setOurCompanyName] = useState('WTechX');
+  const [ourServices, setOurServices] = useState('AI, Robotics, and Computer Vision solutions');
+
+  useEffect(() => {
+    const saved = getSavedCompany();
+    if (saved) {
+      setOurCompanyName(saved.name || 'WTechX');
+      if (saved.services || saved.description) {
+        setOurServices(saved.services || saved.description || 'AI & B2B Solutions');
+      }
+    }
+  }, []);
 
   const handleSendEmail = useCallback(async () => {
     if (!client || !emailBody || !contacts.primary_email) return;
@@ -241,15 +259,19 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           industry: client.industry,
           country: client.country,
           company_summary: client.relevance_reason || `${client.name} is a company operating in ${client.industry}.`,
-          matched_service: (client as any).matched_service || 'AI perception & robotics R&D',
-          match_reason: (client as any).match_reason || `optimizing and automating operations for ${client.name}`,
+          matched_service: (pitchType === 'targeted' && (client.search_query || customKeyword)) 
+            ? (client.search_query || customKeyword) 
+            : (client.matched_service || ourServices || 'our B2B services'),
+          match_reason: (pitchType === 'targeted' && (client.search_query || customKeyword))
+            ? `implementing and optimizing ${client.search_query || customKeyword} solutions for ${client.name}`
+            : (client.match_reason || `optimizing operations for ${client.name}`),
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate outreach email');
 
-      setEmailSubject(data.subject || `AI & Robotics R&D for ${client.name}`);
+      setEmailSubject(data.subject || `${ourServices || 'B2B Solutions'} for ${client.name}`);
       setEmailBody(data.body || '');
 
       // Step 2 Automation: Auto-update status to 'Contacted' so lead moves on Task Board
@@ -266,7 +288,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     } finally {
       setEmailGenerating(false);
     }
-  }, [client]);
+  }, [client, ourServices, pitchType, customKeyword]);
 
   const handleGenerateFollowup = useCallback(async () => {
     if (!client) return;
@@ -287,7 +309,9 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           industry: client.industry,
           country: client.country,
           company_summary: client.relevance_reason || `${client.name} is a company operating in ${client.industry}.`,
-          matched_service: (client as any).matched_service || 'AI perception & robotics R&D',
+          matched_service: (pitchType === 'targeted' && (client.search_query || customKeyword)) 
+            ? (client.search_query || customKeyword) 
+            : (client.matched_service || ourServices || 'our B2B services'),
           is_followup: true,
         }),
       });
@@ -295,14 +319,14 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate follow-up email');
 
-      setEmailSubject(data.subject || `Following up: AI & Robotics R&D for ${client.name}`);
+      setEmailSubject(data.subject || `Following up: ${ourServices || 'B2B Solutions'} for ${client.name}`);
       setEmailBody(data.body || '');
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : 'Follow-up email generation failed');
     } finally {
       setEmailGenerating(false);
     }
-  }, [client]);
+  }, [client, ourServices, pitchType, customKeyword]);
 
   // Negotiation Assistant State
   const [clientReplyInput, setClientReplyInput] = useState('');
@@ -334,7 +358,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           industry: client.industry,
           country: client.country,
           company_summary: client.relevance_reason || `${client.name} is operating in ${client.industry}.`,
-          matched_service: (client as any).matched_service || 'AI perception & robotics R&D',
+          matched_service: client.matched_service || ourServices || 'our B2B services',
           client_reply: clientReplyInput,
         }),
       });
@@ -366,10 +390,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   useEffect(() => {
     async function load() {
       try {
-        const res  = await fetch(`/api/clients/${id}`);
-        const data = await res.json();
+        const token = getAuthToken();
+        const res   = await fetch(`/api/clients/${id}`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+        const data  = await res.json();
         if (!res.ok) throw new Error(data.error || 'Client not found');
         setClient(data.client);
+        if (data.client?.search_query) {
+          setPitchType('targeted');
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -630,7 +660,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         Company Overview & Value Fit
                       </h3>
                       <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100">
-                        WTechX AI Analysis
+                        {ourCompanyName} AI Analysis
                       </span>
                     </div>
 
@@ -649,8 +679,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         <span className="font-bold text-blue-900">Key Benefit: </span>
                         <span className="text-blue-950 font-medium">
                           {(client as any).match_reason 
-                            ? `Can leverage ${(client as any).matched_service || 'WTechX AI & Robotics'} for ${(client as any).match_reason}.`
-                            : `Can leverage WTechX LiDAR-inertial SLAM, AI perception, and sensor fusion to automate site servicing, R&D inspection, and operational efficiency.`
+                            ? `Can leverage ${(client as any).matched_service || ourServices} for ${(client as any).match_reason}.`
+                            : `Can leverage ${ourCompanyName} solutions to automate site servicing, optimize workflows, and increase operational efficiency.`
                           }
                         </span>
                       </div>
@@ -942,6 +972,78 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                       </button>
                     )}
                   </div>
+                  {/* Campaign pitch target selector */}
+                  <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-4 flex flex-col gap-3.5 text-[13px]">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-blue-900 block">Outreach Campaign Goal</span>
+                        <p className="text-blue-950/80 leading-snug">
+                          {client?.search_query ? (
+                            <>
+                              This lead was discovered via search keyword <strong className="text-blue-800">"{client.search_query}"</strong>.
+                            </>
+                          ) : (
+                            <>
+                              No discovery keyword found. You can set a custom target niche/service below.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={() => setPitchType('targeted')}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all border ${
+                            pitchType === 'targeted'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          Targeted Niche Pitch
+                        </button>
+                        <button
+                          onClick={() => setPitchType('general')}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all border ${
+                            pitchType === 'general'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          General Company Intro
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Custom keyword text input field (rendered if no client search_query or when targeted pitch is active) */}
+                    {pitchType === 'targeted' && (
+                      <div className="border-t border-blue-100/60 pt-3 flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span className="font-semibold text-blue-900 whitespace-nowrap">Target Service/Niche:</span>
+                        {client?.search_query ? (
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-lg font-bold text-[12px] border border-blue-200">
+                              {client.search_query}
+                            </span>
+                            <button
+                              onClick={() => {
+                                setCustomKeyword(client.search_query || '');
+                                setClient(prev => prev ? { ...prev, search_query: null } : null);
+                              }}
+                              className="text-[11px] text-blue-600 hover:underline"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={customKeyword}
+                            onChange={(e) => setCustomKeyword(e.target.value)}
+                            placeholder="e.g. AI chatbot, mobile app development, CRM integration..."
+                            className="flex-1 w-full px-3 py-1.5 rounded-lg border border-blue-200 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-800 text-[12px] shadow-inner"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {emailGenerating ? (
                     <div className="py-12 text-center space-y-3">
@@ -949,7 +1051,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         <span className="material-symbols-outlined text-2xl">auto_awesome</span>
                       </div>
                       <p className="text-[14px] font-semibold text-gray-700">Writing personalized cold email for {client.name}...</p>
-                      <p className="text-[12px] text-gray-400">Analyzing company details & WTechX service alignment</p>
+                      <p className="text-[12px] text-gray-400">Analyzing company details & {ourCompanyName} service alignment</p>
                     </div>
                   ) : emailError ? (
                     <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-700 flex items-center justify-between">
@@ -964,7 +1066,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                       <div>
                         <h4 className="text-[15px] font-bold text-gray-800">No Email Generated Yet</h4>
                         <p className="text-[13px] text-gray-500 max-w-md mx-auto mt-1">
-                          Generate a personalized cold outreach email referencing {client.name}'s specific business and WTechX solutions.
+                          Generate a personalized cold outreach email referencing {client.name}'s specific business and {ourCompanyName} solutions.
                         </p>
                       </div>
                       <button
@@ -997,7 +1099,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                           <textarea
                             value={clientReplyInput}
                             onChange={(e) => setClientReplyInput(e.target.value)}
-                            placeholder="Paste client's email reply or objection here... (e.g. 'Your LiDAR SLAM implementation cost is too high for our budget...')"
+                            placeholder={`Paste client's email reply or objection here... (e.g. 'Your ${client?.matched_service || 'B2B solutions'} pricing is too high for our current R&D budget...')`}
                             rows={3}
                             className="w-full p-3 bg-white border border-purple-200 rounded-xl text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none focus:border-purple-500 transition-all resize-y shadow-2xs"
                           />
@@ -1037,7 +1139,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                             <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-2.5 flex items-start gap-2">
                               <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">lightbulb</span>
                               <div>
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 block">WTechX Sales Strategy Advice:</span>
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-900 block">{ourCompanyName} Sales Strategy Advice:</span>
                                 <p className="text-[12.5px] text-amber-950 font-medium leading-relaxed">
                                   {negotiationResult.strategy_hint}
                                 </p>

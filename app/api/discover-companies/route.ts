@@ -30,7 +30,7 @@ async function proxyToBackend(body: object, authHeader?: string | null): Promise
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000), // 2 min timeout
+    signal: AbortSignal.timeout(600_000), // 10 min timeout for multi-page GPU discovery
   });
 
   if (!resp.ok) {
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
     const resp = await fetch(`${getBackendUrl()}/discover-companies?${query.toString()}`, {
       method: 'GET',
       headers,
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(600_000),
     });
 
     if (resp.status === 405 || resp.status === 404) {

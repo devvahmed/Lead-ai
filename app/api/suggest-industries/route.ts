@@ -67,27 +67,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey || apiKey.length < 10) {
-      return NextResponse.json(
-        { error: 'GROQ_API_KEY is missing or invalid in environment variables.' },
-        { status: 500 }
-      );
-    }
+    const rawBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://100.91.220.98:11434/v1';
+    const baseUrl = rawBaseUrl.trim().replace(/\/$/, '');
+    const ollamaEndpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+    const model = process.env.OLLAMA_MODEL || 'llama3:latest';
 
-    const prompt = `We offer this technology/service: '${service}'. Suggest 5-8 real-world industries where companies would genuinely need this technology, with a one-line reason for each. Focus on industries where this creates clear business value. Return as JSON: [{"industry": "", "reason": ""}]`;
+    const prompt = `You are a B2B market intelligence expert. A vendor offers this specific technology or service:
 
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+SERVICE: "${service}"
+
+Your task: Identify the 6-8 industries that are the MOST GENUINE buyers of this exact service — industries where companies face a clear, direct operational or commercial problem that this service specifically solves.
+
+RULES (follow strictly):
+1. Do NOT list generic catch-alls like "Technology", "Business Services", or "Enterprise" unless the service is clearly fundamental to those exact verticals.
+2. Each industry must have a UNIQUE, SPECIFIC reason that is directly tied to how THIS service solves a real problem in THAT industry — not a generic boilerplate reason.
+3. Think about: What does a typical company in this industry DO every day? What pain does this service relieve for them specifically?
+4. Prioritize industries where this service creates COMPETITIVE ADVANTAGE or solves a REGULATORY/COMPLIANCE/OPERATIONAL problem unique to that sector.
+5. Industry names should be specific (e.g. "Digital Health Platforms" not just "Healthcare"; "D2C E-Commerce Brands" not just "Retail").
+
+Return ONLY valid JSON with this exact structure (no markdown):
+{"suggestions": [{"industry": "specific industry name", "reason": "One specific sentence explaining the direct operational need THIS service fills for companies in THIS industry."}]}`;
+
+    const response = await fetch(ollamaEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 800,
+        model: model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a precise B2B market analyst. You only return valid JSON. You never use generic industry names when specific ones are more accurate. Your reasons are always unique to the specific service and industry combination.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.55,
+        max_tokens: 1000,
         response_format: { type: 'json_object' },
       }),
     });

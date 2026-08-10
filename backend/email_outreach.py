@@ -7,9 +7,9 @@ import base64
 import json
 import asyncio
 from datetime import datetime
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import urllib.request
 import urllib.parse
 from dotenv import load_dotenv
@@ -28,6 +28,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 
 import database
 
+from auth_routes import get_current_company
+from auth_models import Company
+
 # Load environment variables
 load_dotenv()
 
@@ -44,7 +47,7 @@ database.init_db()
 
 # ─── Auth Router Integration ──────────────────────────────────────────────────
 from auth_models import init_auth_db
-from auth_routes import router as auth_router
+from auth_routes import router as auth_router, get_current_company, get_current_company_optional, Company
 init_auth_db()
 app.include_router(auth_router)
 
@@ -73,28 +76,54 @@ HEADING_RE          = re.compile(r'^#{1,3}\s+(.+)$', re.MULTILINE)
 
 INVALID_EMAIL_EXTENSIONS = {
     'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tif', 'tiff',
-    'css', 'js', 'woff', 'woff2', 'ttf', 'eot', 'mp4', 'webm', 'pdf', 'zip'
+    'css', 'js', 'woff', 'woff2', 'ttf', 'eot', 'mp4', 'webm', 'pdf', 'zip',
+    'min', 'pack', 'chunk', 'bundle', 'map', 'json', 'ts', 'tsx', 'jsx', 'vue',
+    'scss', 'less', 'gz', 'tar', 'bz2', '7z', 'rar', 'exe', 'dll', 'bin'
 }
 
 _EMAIL_EXCLUDE = {
     'bootstrap', 'jquery', 'wp-content', 'theme', 'plugin', 'template',
     'example.com', 'yourdomain', 'logo', 'noreply', 'no-reply', 'sentry',
-    'wixpress.com', 'schema.org', 'sprite', 'retina', 'w3.org', 'domain.com', 'email.com'
+    'wixpress.com', 'schema.org', 'sprite', 'retina', 'w3.org', 'domain.com',
+    'email.com', 'swiper', 'bundle', 'webpack', 'node_modules', 'min.js', 'min.css',
+    'react', 'vue', 'chunk', 'npm', 'cdn', 'jsdelivr', 'unpkg', 'fontawesome'
 }
 
 def is_valid_email(em: str) -> bool:
     if not em or not isinstance(em, str):
         return False
     clean = em.strip().lower()
-    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', clean):
+
+    # 1. Structural Regex Match (valid characters, proper @ and domain)
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}$', clean):
         return False
+
+    # 2. Extract domain part after '@'
+    domain_part = clean.split('@')[-1]
+
+    # 3. Domain TLD must be purely alphabetic
+    tld = domain_part.split('.')[-1]
+    if not tld.isalpha():
+        return False
+
+    # 4. TLD and sub-parts must not be in file asset extensions (e.g. .min, .js, .css, .bundle)
+    if tld in INVALID_EMAIL_EXTENSIONS:
+        return False
+    if any(part in INVALID_EMAIL_EXTENSIONS for part in domain_part.split('.')):
+        return False
+
+    # 5. Domain must not start with a digit (e.g. @7.0.5-bundle.min)
+    if domain_part[0].isdigit():
+        return False
+
+    # 6. Reject image resolution tags (@2x, @3x)
     if re.search(r'@\d+(\.\d+)?x', clean):
         return False
-    parts = clean.split('.')
-    if len(parts) > 1 and parts[-1] in INVALID_EMAIL_EXTENSIONS:
-        return False
+
+    # 7. Exclude known static asset, library, or generic placeholder keywords
     if any(kw in clean for kw in _EMAIL_EXCLUDE):
         return False
+
     return True
 
 
@@ -369,13 +398,117 @@ async def fetch_raw_html(url: str) -> str:
     def _fetch():
         try:
             req = urllib.request.Request(url, headers=_REAL_HEADERS)
-            with urllib.request.urlopen(req, timeout=14, context=_SSL_CTX) as resp:
+            with urllib.request.urlopen(req, timeout=4.0, context=_SSL_CTX) as resp:
                 raw_bytes = resp.read()
                 return _decompress_and_decode(resp, raw_bytes)
         except Exception as e:
-            print(f"[HTTP Fetch Raw] Failed {url}: {e}")
             return ""
     return await loop.run_in_executor(None, _fetch)
+
+
+def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 2) -> List[str]:
+    """
+    Extracts up to `max_links` same-domain sub-page URLs from a company's homepage HTML,
+    prioritizing links whose URL path or anchor text contains terms like:
+    'about', 'about-us', 'company', 'products', 'services', 'solutions', 'what-we-do', 'contact'.
+    """
+    if not homepage_url or not raw_html:
+        return []
+
+    try:
+        from urllib.parse import urlparse, urljoin
+        base_parsed = urlparse(homepage_url)
+        base_netloc = base_parsed.netloc.lower().replace("www.", "")
+
+        soup = BeautifulSoup(raw_html, 'html.parser')
+        target_keywords = [
+            "about", "about-us", "company", "products", "services",
+            "solutions", "what-we-do", "contact", "contact-us", "who-we-are"
+        ]
+
+        found_links = []
+        seen_urls = set()
+
+        for a in soup.find_all('a', href=True):
+            href = a['href'].strip()
+            anchor_text = a.get_text(separator=' ').strip().lower()
+
+            if not href or href.startswith('#') or href.lower().startswith(('javascript:', 'mailto:', 'tel:')):
+                continue
+
+            full_url = urljoin(homepage_url, href)
+            parsed = urlparse(full_url)
+
+            # Must be same domain (or subdomain)
+            cand_netloc = parsed.netloc.lower().replace("www.", "")
+            if cand_netloc != base_netloc and not cand_netloc.endswith('.' + base_netloc):
+                continue
+
+            # Must be a sub-page path, not the homepage itself
+            path = parsed.path.lower().rstrip('/')
+            if not path or path in ('', '/en', '/us', '/home', '/index.html', '/index.php'):
+                continue
+
+            # Skip personnel/leadership/bio pages to prioritize company-level business evidence
+            skip_terms = ["leadership", "executive", "board-of-directors", "bio", "people", "management-team", "careers", "job-openings"]
+            path_and_anchor = f"{parsed.path.lower()}?{parsed.query.lower()} {anchor_text}"
+            if any(st in path_and_anchor for st in skip_terms):
+                continue
+
+            # Check if path or anchor text matches any target keyword
+            if any(kw in path_and_anchor for kw in target_keywords):
+                clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
+                if clean_target not in seen_urls and clean_target != homepage_url.rstrip('/'):
+                    seen_urls.add(clean_target)
+                    found_links.append(clean_target)
+                    if len(found_links) >= max_links:
+                        break
+
+        return found_links
+    except Exception:
+        return []
+
+
+async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tuple[str, str]:
+    """
+    Fetches candidate homepage and concurrently fetches 1-2 sub-pages (About, Products, Services, Contact).
+    Combines contents into a rich evidence block and returns (combined_text, evidence_source_label).
+    """
+    # 1. Fetch raw HTML for homepage to extract text and sub-page links
+    raw_html = await fetch_raw_html(url)
+    homepage_text = await fetch_url_content(url, timeout=timeout)
+
+    if not homepage_text:
+        return "", "none"
+
+    # 2. Discover 1-2 sub-pages (About, Products, Services, etc.)
+    subpage_urls = discover_subpage_urls(url, raw_html, max_links=2)
+
+    if not subpage_urls:
+        return homepage_text, "homepage only"
+
+    # 3. Concurrently fetch the 1-2 sub-pages with short timeout (3.0s max)
+    sub_results = await asyncio.gather(
+        *[fetch_url_content(sub_url, timeout=3.0) for sub_url in subpage_urls],
+        return_exceptions=True
+    )
+
+    combined_text = homepage_text[:1800]
+    fetched_sources = ["homepage"]
+
+    for idx, sub_url in enumerate(subpage_urls):
+        res = sub_results[idx]
+        if isinstance(res, str) and res.strip() and len(res.strip()) > 100:
+            try:
+                from urllib.parse import urlparse
+                path_name = urlparse(sub_url).path or sub_url
+            except Exception:
+                path_name = sub_url
+            fetched_sources.append(path_name)
+            combined_text += f"\n\n--- SUBPAGE EVIDENCE ({path_name}) ---\n{res[:1000]}"
+
+    source_label = " + ".join(fetched_sources)
+    return combined_text, source_label
 
 # ─── Smart Internal Link Discovery ────────────────────────────────────────────
 _CONTACT_KEYWORDS = [
@@ -428,12 +561,12 @@ def discover_contact_links(raw_html: str, base_url: str, max_links: int = 10) ->
             continue
         seen.add(abs_url)
 
-        path_lower = parsed.path.lower()
+        url_full_lower = (parsed.path + '?' + parsed.query).lower()
         score = 0
         if href in priority_hrefs:
             score += 5
         for kw in _CONTACT_KEYWORDS:
-            if kw in path_lower:
+            if kw in url_full_lower:
                 score += 3
                 break
         if score == 0:
@@ -589,20 +722,38 @@ def call_ollama(prompt: str) -> str:
 
 
 def call_ollama_json(prompt: str) -> dict:
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    payload = {"model": "llama3.2", "prompt": prompt, "format": "json", "stream": False}
-    try:
-        req = urllib.request.Request(
-            f"{ollama_url}/api/generate",
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}, method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=1.5) as res:
-            text = json.loads(res.read().decode('utf-8')).get('response', '')
-            if text:
-                return json.loads(text.strip())
-    except Exception as e:
-        print(f"[Ollama JSON] Error: {e}")
+    raw_base = os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_BASE_URL") or "http://100.91.220.98:11434"
+    base_url = raw_base.strip().rstrip("/")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
+
+    endpoint = f"{base_url}/api/generate"
+    model_name = os.getenv("OLLAMA_MODEL", "llama3:latest")
+    payload = {"model": model_name, "prompt": prompt, "format": "json", "stream": False}
+
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'User-Agent': 'ClientPlus-AI/1.0'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=3.5) as res:
+                if res.status == 200:
+                    text = json.loads(res.read().decode('utf-8')).get('response', '')
+                    if text:
+                        return json.loads(text.strip())
+        except Exception as e:
+            is_reset_err = any(err_kw in str(e).lower() for err_kw in ["10054", "reset", "timed out", "connection", "closed"])
+            if attempt < max_retries and is_reset_err:
+                import time
+                time.sleep(0.4)
+                continue
+            print(f"[Ollama JSON Error] Endpoint '{endpoint}' attempt {attempt}/{max_retries}: {e}")
+            break
+
     return {}
 
 # ─── /enrich-contacts ─────────────────────────────────────────────────────────
@@ -631,12 +782,12 @@ async def enrich_contacts(data: EnrichRequest):
     source_label     = "General Contact"
     contact_page_url = None
 
-    if email_meta:
+    if email_meta and isinstance(email_meta[0], dict):
         first            = email_meta[0]
-        source_context   = first["source_context"] or source_context
-        source_page      = first["source_page"]
-        source_label     = first["source_label"] or source_label
-        contact_page_url = first["source_url"]
+        source_context   = first.get("source_context") or source_context
+        source_page      = first.get("source_page", source_page)
+        source_label     = first.get("source_label") or source_label
+        contact_page_url = first.get("source_url") or contact_page_url
     elif emails:
         source_context = find_source_context(content, emails[0])
     else:
@@ -823,8 +974,8 @@ async def get_client_status(email: str):
     return client
 
 @app.get("/clients")
-async def get_all_clients():
-    return database.get_all_leads()
+async def get_all_clients(current_company: Company = Depends(get_current_company)):
+    return database.get_all_leads(company_id=current_company.id)
 
 @app.post("/crawl-homepage")
 async def crawl_homepage(data: CrawlRequest):
@@ -985,8 +1136,26 @@ async def deep_enrich(data: EnrichRequest):
     if email_meta:
         contact_page_url = email_meta[0].get("source_url")
         source_label     = email_meta[0].get("source_label", source_label)
-    if not contact_page_url:
-        contact_page_url = f"{base}/contact-us"
+    # Priority 2: Hunter.io API Fallback ONLY if Priority 1 found no primary email
+    if not primary_email and os.getenv("HUNTER_API_KEY"):
+        hunter_key = os.getenv("HUNTER_API_KEY").strip()
+        try:
+            from urllib.parse import urlparse
+            dom = urlparse(normalized_url).netloc.replace("www.", "")
+            if dom:
+                h_url = f"https://api.hunter.io/v2/domain-search?domain={dom}&limit=5&type=personal&api_key={hunter_key}"
+                h_req = urllib.request.Request(h_url, headers={"Accept": "application/json"})
+                with urllib.request.urlopen(h_req, timeout=5.0) as h_res:
+                    if h_res.status == 200:
+                        h_data = json.loads(h_res.read().decode('utf-8'))
+                        h_emails = [e.get("value") for e in (h_data.get("data", {}).get("emails") or []) if e.get("value")]
+                        if h_emails:
+                            primary_email = h_emails[0]
+                            emails = list(dict.fromkeys(emails + h_emails))
+                            source_label = "Hunter.io API (Fallback)"
+                            print(f"[Hunter.io Fallback] Found email for {dom}: {primary_email}")
+        except Exception as he:
+            print(f"[Hunter.io Fallback] Skipped/Error: {he}")
 
     print(f"[Deep Enrich] Done — emails={emails}, phones={phones[:3]}, linkedin={linkedin_company}")
 
@@ -1004,8 +1173,91 @@ async def deep_enrich(data: EnrichRequest):
         "stage":            2,
     }
 
-# ─── Lazy Include Discover Router ─────────────────────────────────────────────
-@app.on_event("startup")
-def include_discover_router():
-    from discover import discover_router
-    app.include_router(discover_router)
+
+# ─── SQLite Client Management Endpoints ─────────────────────────────────────────
+class SaveClientRequest(BaseModel):
+    name: str
+    website: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    trustScore: Optional[int] = 0
+    relevanceReason: Optional[str] = None
+    status: Optional[str] = "Pending"
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    phones: Optional[str] = None
+    linkedin_company: Optional[str] = None
+    contactSource: Optional[dict] = None
+    logoUrl: Optional[str] = None
+    searchQuery: Optional[str] = None
+
+class UpdateClientRequest(BaseModel):
+    name: Optional[str] = None
+    website: Optional[str] = None
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    trust_score: Optional[int] = None
+    relevance_reason: Optional[str] = None
+    status: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    phones: Optional[str] = None
+    linkedin_company: Optional[str] = None
+    contact_source_url: Optional[str] = None
+    contact_source_page: Optional[str] = None
+    contact_source_label: Optional[str] = None
+    enrichment_json: Optional[str] = None
+    logo_url: Optional[str] = None
+    search_query: Optional[str] = None
+
+@app.post("/api/save-client")
+async def api_save_client(data: SaveClientRequest, current_company: Company = Depends(get_current_company_optional)):
+    cs = data.contactSource or {}
+    client_row = database.save_client(
+        name=data.name,
+        website=data.website,
+        industry=data.industry,
+        country=data.country,
+        trust_score=data.trustScore or 0,
+        relevance_reason=data.relevanceReason,
+        status=data.status or "Pending",
+        email=data.email,
+        phone=data.phone,
+        phones=data.phones,
+        linkedin_company=data.linkedin_company,
+        contact_source_url=cs.get("url"),
+        contact_source_page=cs.get("page"),
+        contact_source_label=cs.get("label"),
+        contact_source_context=cs.get("context"),
+        logo_url=data.logoUrl,
+        search_query=data.searchQuery,
+        company_id=current_company.id
+    )
+    return {"success": True, "client": client_row}
+
+@app.get("/api/clients")
+async def api_get_clients(current_company: Company = Depends(get_current_company_optional)):
+    clients = database.get_clients(company_id=current_company.id)
+    return {"clients": clients}
+
+@app.get("/api/clients/{client_id}")
+async def api_get_client(client_id: int, current_company: Company = Depends(get_current_company_optional)):
+    client = database.get_client_by_id(client_id, company_id=current_company.id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return {"client": client}
+
+@app.patch("/api/clients/{client_id}")
+@app.put("/api/clients/{client_id}")
+async def api_update_client(client_id: int, data: UpdateClientRequest, current_company: Company = Depends(get_current_company_optional)):
+    payload = data.dict(exclude_unset=True)
+    if "enrichment_json" in payload:
+        payload["contact_source_context"] = payload.pop("enrichment_json")
+    updated = database.update_client(client_id, company_id=current_company.id, **payload)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Client update failed or not found")
+    return {"success": True, "client": updated}
+
+# ─── Include Discover Router ──────────────────────────────────────────────────
+from discover import discover_router
+app.include_router(discover_router)

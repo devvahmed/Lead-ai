@@ -27,6 +27,7 @@ class Company(Base):
     target_customers = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     logo_path = Column(String(512), nullable=True)
+    ai_enriched_profile = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 def init_auth_db():

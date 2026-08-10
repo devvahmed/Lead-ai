@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
+import { getAuthToken } from '@/lib/auth';
 
 interface SavedClient {
   id: string;
@@ -40,12 +41,15 @@ export default function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch real saved clients from Supabase via /api/clients
+  // Fetch real saved clients from SQLite via /api/clients
   useEffect(() => {
     async function loadClients() {
       try {
         setLoading(true);
-        const res = await fetch('/api/clients');
+        const token = getAuthToken();
+        const res = await fetch('/api/clients', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to fetch clients');
         setClients(data.clients || []);
@@ -62,9 +66,13 @@ export default function TasksPage() {
   const handleStageChange = async (clientId: string, newStatus: string) => {
     setClients(prev => prev.map(c => c.id === clientId ? { ...c, status: newStatus } : c));
     try {
+      const token = getAuthToken();
       await fetch(`/api/clients/${clientId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ status: newStatus }),
       });
     } catch (err) {

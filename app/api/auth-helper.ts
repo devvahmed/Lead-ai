@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 
 export interface AuthenticatedCompany {
   id: number;
-  name: str;
+  name: string;
   email: string;
   website?: string | null;
   industry?: string | null;

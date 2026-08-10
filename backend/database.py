@@ -3,7 +3,7 @@ import os
 import json
 from datetime import datetime
 
-DB_FILE = "wtechx_leads.db"
+DB_FILE = os.getenv("DATABASE_FILE", "clientplus_sales.db")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
@@ -69,6 +69,49 @@ def init_db():
         ("company_id", "INTEGER DEFAULT 1"),
     ]:
         _safe_add_column(cursor, "enriched_contacts", col, col_type)
+
+    # Clients table (saved prospects from discovery)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER DEFAULT 1,
+            name TEXT NOT NULL,
+            website TEXT,
+            industry TEXT,
+            country TEXT,
+            trust_score INTEGER DEFAULT 0,
+            relevance_reason TEXT,
+            status TEXT DEFAULT 'Pending',
+            email TEXT,
+            phone TEXT,
+            phones TEXT,
+            linkedin_company TEXT,
+            contact_source_url TEXT,
+            contact_source_page TEXT,
+            contact_source_label TEXT,
+            contact_source_context TEXT,
+            logo_url TEXT,
+            search_query TEXT,
+            created_at TEXT
+        )
+    """)
+    for col, col_type in [
+        ("company_id", "INTEGER DEFAULT 1"),
+        ("email", "TEXT"),
+        ("phone", "TEXT"),
+        ("phones", "TEXT"),
+        ("linkedin_company", "TEXT"),
+        ("contact_source_url", "TEXT"),
+        ("contact_source_page", "TEXT"),
+        ("contact_source_label", "TEXT"),
+        ("contact_source_context", "TEXT"),
+        ("logo_url", "TEXT"),
+        ("search_query", "TEXT"),
+        ("created_at", "TEXT"),
+    ]:
+        _safe_add_column(cursor, "clients", col, col_type)
+
+    _safe_add_column(cursor, "companies", "ai_enriched_profile", "TEXT")
 
     conn.commit()
     conn.close()
@@ -265,3 +308,125 @@ def get_dashboard_stats(company_id: int):
         }
     finally:
         conn.close()
+
+
+def save_client(name, website=None, industry=None, country=None, trust_score=0,
+                relevance_reason=None, status="Pending", email=None, phone=None,
+                phones=None, linkedin_company=None, contact_source_url=None,
+                contact_source_page=None, contact_source_label=None,
+                contact_source_context=None, logo_url=None, search_query=None, company_id=1):
+    """Saves or updates a client record in SQLite DB (deduplicated) and returns dict."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check for existing record by name or website
+        existing = cursor.execute("""
+            SELECT id FROM clients
+            WHERE company_id = ? AND (LOWER(name) = LOWER(?) OR (website IS NOT NULL AND LOWER(website) = LOWER(?)))
+        """, (company_id, name, website or "")).fetchone()
+
+        if existing:
+            client_id = existing["id"]
+            # Update existing record cleanly without duplicate insert
+            return update_client(
+                client_id=client_id,
+                company_id=company_id,
+                name=name,
+                website=website,
+                industry=industry,
+                country=country,
+                trust_score=trust_score,
+                relevance_reason=relevance_reason,
+                status=status,
+                email=email,
+                phone=phone,
+                phones=phones,
+                linkedin_company=linkedin_company,
+                contact_source_url=contact_source_url,
+                contact_source_page=contact_source_page,
+                contact_source_label=contact_source_label,
+                contact_source_context=contact_source_context,
+                logo_url=logo_url,
+                search_query=search_query
+            )
+
+        created_at = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT INTO clients (
+                company_id, name, website, industry, country, trust_score,
+                relevance_reason, status, email, phone, phones, linkedin_company,
+                contact_source_url, contact_source_page, contact_source_label,
+                contact_source_context, logo_url, search_query, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (company_id, name, website, industry, country, trust_score,
+              relevance_reason, status, email, phone, phones, linkedin_company,
+              contact_source_url, contact_source_page, contact_source_label,
+              contact_source_context, logo_url, search_query, created_at))
+        conn.commit()
+        client_id = cursor.lastrowid
+        row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_clients(company_id=1):
+    """Retrieves all saved clients scoped strictly by company_id."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        rows = cursor.execute(
+            "SELECT * FROM clients WHERE company_id = ? ORDER BY id DESC", (company_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_client_by_id(client_id, company_id=1):
+    """Retrieves a single saved client by ID and company_id (with fallback)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        row = cursor.execute(
+            "SELECT * FROM clients WHERE id = ? AND company_id = ?", (client_id, company_id)
+        ).fetchone()
+        if not row:
+            row = cursor.execute(
+                "SELECT * FROM clients WHERE id = ?", (client_id,)
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_client(client_id, company_id=1, **kwargs):
+    """Updates client record attributes in SQLite."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        allowed = [
+            "name", "website", "industry", "country", "trust_score", "relevance_reason",
+            "status", "email", "phone", "phones", "linkedin_company", "contact_source_url",
+            "contact_source_page", "contact_source_label", "contact_source_context", "logo_url", "search_query"
+        ]
+        updates = []
+        values = []
+        for key, val in kwargs.items():
+            if key in allowed and val is not None:
+                updates.append(f"{key} = ?")
+                values.append(val)
+        if not updates:
+            row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+            return dict(row) if row else None
+
+        values.append(client_id)
+        sql = f"UPDATE clients SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(sql, values)
+        conn.commit()
+
+        row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+

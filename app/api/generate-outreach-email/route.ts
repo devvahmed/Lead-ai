@@ -2,30 +2,37 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedCompany } from '../auth-helper';
 
 export async function POST(req: NextRequest) {
+  let isFollowup = false;
+  let company_name = 'the target company';
+  let industry = 'Technology';
+  let matched_service = 'AI & Automated Solutions';
+  let match_reason = 'optimizing operations';
+  let ourCompanyName = 'WTechX';
+
   try {
     const companyProfile = await getAuthenticatedCompany(req);
-    if (!companyProfile) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Valid Bearer token required.' },
-        { status: 401 }
-      );
+    let ourServices = 'AI, Robotics, and Computer Vision solutions';
+    let ourDescription = 'provider of intelligent automated solutions';
+
+    if (companyProfile) {
+      ourCompanyName = companyProfile.name;
+      ourServices = companyProfile.services || companyProfile.description || ourServices;
+      ourDescription = companyProfile.description || `${ourCompanyName} provides ${ourServices}.`;
     }
 
-    const ourCompanyName = companyProfile.name;
-    const ourServices = companyProfile.services || companyProfile.description || 'B2B Products & Solutions';
-    const ourDescription = companyProfile.description || `${ourCompanyName} provides ${ourServices}.`;
-
     const body = await req.json();
-    const company_name = body.company_name || body.companyName || 'the target company';
-    const industry = body.industry || 'Technology';
+    company_name = body.company_name || body.companyName || 'the target company';
+    industry = body.industry || 'Technology';
     const country = body.country || 'Global';
     const company_summary = body.company_summary || body.description || body.relevance_reason || `${company_name} is a leading provider in the ${industry} industry.`;
-    const matched_service = body.matched_service || body.matchedService || ourServices;
-    const match_reason = body.match_reason || body.matchReason || `optimizing operations for ${company_name}`;
-    const isFollowup = Boolean(body.is_followup || body.isFollowup);
+    matched_service = body.matched_service || body.matchedService || ourServices;
+    match_reason = body.match_reason || body.matchReason || `optimizing operations for ${company_name}`;
+    isFollowup = Boolean(body.is_followup || body.isFollowup);
 
-    const apiKey = process.env.GROQ_API_KEY;
-    const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+    const rawBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://100.91.220.98:11434/v1';
+    const baseUrl = rawBaseUrl.trim().replace(/\/$/, '');
+    const ollamaEndpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+    const model = process.env.OLLAMA_MODEL || 'llama3:latest';
 
     const systemPrompt = isFollowup
       ? `Write a short, polite 2-3 sentence cold follow-up nudge email to ${company_name}, a company in the ${industry} industry (${country}). 
@@ -67,23 +74,12 @@ Return ONLY pure JSON matching this exact structure:
   "body": "full email body text ready to send"
 }`;
 
-    if (!apiKey) {
-      console.warn('[Groq Email Gen] GROQ_API_KEY missing — using fallback draft');
-      return NextResponse.json({
-        subject: isFollowup ? `Following up: ${matched_service} for ${company_name}` : `${matched_service} for ${company_name}`,
-        body: isFollowup
-          ? `Hi team at ${company_name},\n\nI wanted to quickly follow up on my previous message regarding ${ourCompanyName}'s ${matched_service} solutions. I know things can get busy!\n\nWould you or someone on your team have 15 minutes next week for a brief intro call?\n\nBest regards,\nThe ${ourCompanyName} Team`
-          : `Hi team at ${company_name},\n\nI was following ${company_name}'s work in ${industry} and noticed your technical focus. Companies scaling in this space often face operational bottlenecks when ${match_reason}.\n\nAt ${ourCompanyName}, we specialize in ${matched_service} to help teams automate production and workflow tasks.\n\nWould you be open to a brief 15-minute intro call next week to discuss your roadmap?\n\nBest regards,\nThe ${ourCompanyName} Team`
-      });
-    }
+    console.log(`[Ollama Email Gen] Generating ${isFollowup ? 'follow-up' : 'initial'} email for ${company_name} on behalf of ${ourCompanyName}...`);
 
-    console.log(`[Groq Email Gen] Generating ${isFollowup ? 'follow-up' : 'initial'} email for ${company_name} on behalf of ${ourCompanyName}...`);
-
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const groqRes = await fetch(ollamaEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: model,
@@ -92,7 +88,7 @@ Return ONLY pure JSON matching this exact structure:
         max_tokens: 500,
         response_format: { type: 'json_object' },
       }),
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(25000),
     });
 
     if (!groqRes.ok) {
@@ -121,6 +117,12 @@ Return ONLY pure JSON matching this exact structure:
     });
   } catch (err) {
     console.error('Email generation error:', err);
-    return NextResponse.json({ error: 'Failed to generate outreach email' }, { status: 500 });
+    // Return clean fallback email instead of 500 red alert UI crash
+    return NextResponse.json({
+      subject: isFollowup ? `Following up: ${matched_service} for ${company_name}` : `${matched_service} for ${company_name}`,
+      body: isFollowup
+        ? `Hi team at ${company_name},\n\nFollowing up on my previous email regarding ${ourCompanyName}'s ${matched_service} capabilities.\n\nWould you be open to a quick 15-minute call next week to see if there is alignment for your roadmap?\n\nBest regards,\nThe ${ourCompanyName} Team`
+        : `Hi team at ${company_name},\n\nI was reviewing ${company_name}'s operations in ${industry} and was impressed by your team's work. Teams expanding in this domain often look for specialized support when ${match_reason}.\n\nAt ${ourCompanyName}, we provide ${matched_service} to help accelerate production and operational pipelines.\n\nWould you be available for a short 15-minute call next week to see if there is an alignment?\n\nBest regards,\nThe ${ourCompanyName} Team`
+    });
   }
 }

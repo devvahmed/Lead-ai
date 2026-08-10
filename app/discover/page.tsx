@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 import CountryCitySelector from '@/components/CountryCitySelector';
-import { getAuthToken } from '@/lib/auth';
+import { getAuthToken, getSavedCompany } from '@/lib/auth';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,6 +44,8 @@ export interface Company {
   outreachAngle?: string;
   personalizationHook?: string;
   redFlags?: string;
+  /** Two-way lead classification from backend: 'needs_service' | 'has_similar_service' */
+  leadType?: 'needs_service' | 'has_similar_service';
 }
 
 interface AnalysisResult {
@@ -85,8 +87,11 @@ const COUNTRIES = [
   'Pakistan', 'UAE', 'Japan', 'Brazil', 'South Korea',
 ];
 const MIN_TRUST_OPTIONS = [
-  { label: 'Any', value: 0 }, { label: '50+', value: 50 },
-  { label: '70+', value: 70 }, { label: '85+', value: 85 },
+  { label: 'Any (0+)', value: 0 },
+  { label: '60+', value: 60 },
+  { label: '75+ (Recommended)', value: 75 },
+  { label: '85+', value: 85 },
+  { label: '90+', value: 90 },
 ];
 
 // ─── Company Logo (with fallback) ────────────────────────────────────────────
@@ -328,6 +333,19 @@ function CompanyCard({
           <span className={`px-2 py-1 rounded-lg text-[11px] font-semibold ${fitBadgeColor[company.trustStatus] ?? fitBadgeColor['Neutral']}`}>
             {(company as any).matchConfidence !== undefined ? `${(company as any).matchConfidence}% Match` : (company.trustStatus || 'High Fit')}
           </span>
+          {/* ── Lead Type Badge ──────────────────────────────────────────── */}
+          {(company as any).leadType === 'needs_service' && (
+            <span className="px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-green-50 text-green-800 border border-green-200/80 flex items-center gap-1" title="This company shows no evidence of already using your service type — prime prospect">
+              <span className="material-symbols-outlined text-[11px] text-green-600">star</span>
+              Potential New Client
+            </span>
+          )}
+          {(company as any).leadType === 'has_similar_service' && (
+            <span className="px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 flex items-center gap-1" title="Company already uses a similar service — pitch as an upsell or replacement">
+              <span className="material-symbols-outlined text-[11px] text-amber-600">trending_up</span>
+              Upsell Opportunity
+            </span>
+          )}
           {company.matchedService && (
             <span className="px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/70 flex items-center gap-1">
               <span className="material-symbols-outlined text-[12px] text-indigo-600">bolt</span>
@@ -532,7 +550,7 @@ export default function DiscoverPage() {
   const [keyword, setKeyword] = useState('');
   const [country, setCountry] = useState('All Countries');
   const [city, setCity] = useState('');
-  const [minTrust, setMinTrust] = useState(0);
+  const [minTrust, setMinTrust] = useState(75);  // default raised to match backend
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorFix, setErrorFix] = useState<string | null>(null);
@@ -555,34 +573,31 @@ export default function DiscoverPage() {
   const [suggestions, setSuggestions] = useState<IndustrySuggestion[]>([]);
   const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
 
-  // Profile-aware Quick Target Industry Tags state
+  // Profile-aware Quick Target Industry Tags state (populates only after explicit suggest action)
   const [quickTags, setQuickTags] = useState<string[]>([]);
-  const [quickTagsLoading, setQuickTagsLoading] = useState(true);
+  const [quickTagsLoading, setQuickTagsLoading] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchQuickTags = async () => {
-      setQuickTagsLoading(true);
-      try {
-        const token = getAuthToken();
-        const res = await fetch('/api/suggest-industries', {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        });
-        const data = await res.json();
-        if (data.suggested_industries && data.suggested_industries.length > 0) {
-          setQuickTags(data.suggested_industries);
-        }
-        if (data.company_name) {
-          setCompanyName(data.company_name);
-        }
-      } catch (err) {
-        console.warn('[Quick Tags Fetch Error]:', err);
-      } finally {
-        setQuickTagsLoading(false);
-      }
-    };
+  // Dynamic placeholders derived from user company profile or fallback real examples
+  const [suggestPlaceholder, setSuggestPlaceholder] = useState('e.g. AI Automation, Cloud Infrastructure, Robotics...');
+  const [keywordPlaceholder, setKeywordPlaceholder] = useState('e.g. Fintech, Healthcare, Software & SaaS, Logistics...');
 
-    fetchQuickTags();
+  useEffect(() => {
+    const savedCompany = getSavedCompany();
+    if (savedCompany) {
+      if (savedCompany.name) {
+        setCompanyName(savedCompany.name);
+      }
+      if (savedCompany.services) {
+        const servicesList = savedCompany.services.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+        if (servicesList.length > 0) {
+          setSuggestPlaceholder(`e.g. ${servicesList.slice(0, 3).join(', ')}...`);
+        }
+      }
+      if (savedCompany.industry) {
+        setKeywordPlaceholder(`e.g. ${savedCompany.industry}, Software & SaaS, E-Commerce...`);
+      }
+    }
   }, []);
 
   const handleSuggestIndustries = useCallback(async () => {
@@ -604,7 +619,9 @@ export default function DiscoverPage() {
         throw new Error(data.error || 'Failed to get industry suggestions');
       }
 
-      setSuggestions(data.suggestions || []);
+      const fetchedSuggestions = data.suggestions || [];
+      setSuggestions(fetchedSuggestions);
+      setQuickTags(fetchedSuggestions.map((s: IndustrySuggestion) => s.industry));
       setSelectedIndustries([]);
     } catch (err) {
       setSuggestError(err instanceof Error ? err.message : 'Failed to suggest industries');
@@ -629,7 +646,9 @@ export default function DiscoverPage() {
   // ── Restore search state from sessionStorage on page mount ─────────────────
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('clientplus_discover_cache');
+      const savedCompany = getSavedCompany();
+      const cacheKey = savedCompany?.id ? `clientplus_discover_cache_${savedCompany.id}` : 'clientplus_discover_cache_guest';
+      const saved = sessionStorage.getItem(cacheKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.companies && parsed.companies.length > 0) {
@@ -723,6 +742,7 @@ export default function DiscoverPage() {
                 linkedin: updatedComp.linkedin || null,
                 contactSource: updatedComp.contactSource || null,
                 logoUrl: updatedComp.logoUrl || null,
+                searchQuery: lastKeyword || keyword || null,
               }),
             }).catch((e) => console.warn('Sync enriched contact to client error:', e));
           }
@@ -739,7 +759,9 @@ export default function DiscoverPage() {
   useEffect(() => {
     if (companies && companies.length > 0) {
       try {
-        sessionStorage.setItem('clientplus_discover_cache', JSON.stringify({
+        const savedCompany = getSavedCompany();
+        const cacheKey = savedCompany?.id ? `clientplus_discover_cache_${savedCompany.id}` : 'clientplus_discover_cache_guest';
+        sessionStorage.setItem(cacheKey, JSON.stringify({
           companies,
           keyword,
           country,
@@ -759,7 +781,9 @@ export default function DiscoverPage() {
 
   const handleClearSession = () => {
     try {
-      sessionStorage.removeItem('clientplus_discover_cache');
+      const savedCompany = getSavedCompany();
+      const cacheKey = savedCompany?.id ? `clientplus_discover_cache_${savedCompany.id}` : 'clientplus_discover_cache_guest';
+      sessionStorage.removeItem(cacheKey);
     } catch (e) {}
     setCompanies([]);
     setHasSearched(false);
@@ -862,9 +886,14 @@ export default function DiscoverPage() {
               } else if (event.type === 'company') {
                 const { type: _t, ...company } = event;
                 const c = company as Company;
+                // Map leadType from backend (SCREAMING_SNAKE → lower_snake)
+                if ((c as any).leadType) {
+                  (c as any).leadType = String((c as any).leadType).toLowerCase() as 'needs_service' | 'has_similar_service';
+                }
                 // Client-side filter: confidence gate
                 if (((c as any).matchConfidence ?? c.trustScore ?? 0) < (minTrust || 0)) continue;
                 accumulated.push(c);
+                console.log(`[FRONTEND STREAM] Received company #${accumulated.length}: ${c.name} (${c.domain})`);
                 setCompanies([...accumulated]);
                 setStreamProgress(prev => prev ? { ...prev, found: accumulated.length } : null);
                 setHasSearched(true);
@@ -875,6 +904,24 @@ export default function DiscoverPage() {
               // Non-JSON line — skip silently
             }
           }
+        }
+
+        if (buffer.trim()) {
+          try {
+            const event = JSON.parse(buffer.trim());
+            if (event.type === 'company') {
+              const { type: _t, ...company } = event;
+              const c = company as Company;
+              if ((c as any).leadType) {
+                (c as any).leadType = String((c as any).leadType).toLowerCase() as 'needs_service' | 'has_similar_service';
+              }
+              if (((c as any).matchConfidence ?? c.trustScore ?? 0) >= (minTrust || 0)) {
+                accumulated.push(c);
+                console.log(`[FRONTEND STREAM Buffer] Received company #${accumulated.length}: ${c.name} (${c.domain})`);
+                setCompanies([...accumulated]);
+              }
+            }
+          } catch {}
         }
 
         if (!isSubsequent) {
@@ -948,9 +995,13 @@ export default function DiscoverPage() {
 
   const handleSave = useCallback(async (company: Company, relevanceReason?: string) => {
     try {
+      const token = getAuthToken();
       const res = await fetch('/api/save-client', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           name: company.name,
           website: company.website,
@@ -964,6 +1015,7 @@ export default function DiscoverPage() {
           linkedin: company.linkedin || null,
           contactSource: company.contactSource || null,
           logoUrl: company.logoUrl || null,
+          searchQuery: lastKeyword || keyword || null,
         }),
       });
       const data = await res.json();
@@ -996,10 +1048,13 @@ export default function DiscoverPage() {
               ? enrichData.phones[0] : company.phone || null;
             const newLinkedin = enrichData.linkedin_company || company.linkedin || null;
 
-            // Update Supabase record with Stage 2 contacts
+            // Update client record in SQLite DB with Stage 2 contacts
             await fetch(`/api/clients/${clientId}`, {
               method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+              },
               body: JSON.stringify({
                 email: newEmail,
                 phone: newPhone,
@@ -1094,7 +1149,7 @@ export default function DiscoverPage() {
                     handleSuggestIndustries();
                   }
                 }}
-                placeholder="e.g. Drone mapping, LiDAR SLAM, AI perception..."
+                placeholder={suggestPlaceholder}
                 className="w-full h-10 pl-3.5 pr-3 py-2 bg-surface border border-outline-variant rounded-xl text-[14px] text-on-surface focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
               />
             </div>
@@ -1181,55 +1236,10 @@ export default function DiscoverPage() {
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-secondary mb-2">Industry / Keyword</label>
             <input
               type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder="e.g. Fintech, Healthcare, SaaS, Manufacturing..."
+              placeholder={keywordPlaceholder}
               className="w-full h-10 px-3 py-2 bg-surface border border-outline-variant rounded-xl text-[14px] text-on-surface focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
             />
-            {/* Dynamic Quick Target Industry Tags */}
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-secondary flex items-center gap-1 mr-1">
-                <span className="material-symbols-outlined text-[13px] text-primary">auto_awesome</span>
-                Suggested for {companyName || 'you'}:
-              </span>
-              {quickTagsLoading ? (
-                <div className="flex gap-1.5">
-                  {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="h-6 w-16 bg-surface-container-high rounded-full animate-pulse" />
-                  ))}
-                </div>
-              ) : (
-                quickTags.map((tag) => {
-                  const isSelected = keyword.toLowerCase().includes(tag.toLowerCase());
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => {
-                        if (isSelected) {
-                          const cleaned = keyword
-                            .replace(new RegExp(tag, 'gi'), '')
-                            .replace(/,\s*,/g, ',')
-                            .replace(/^,\s*|\s*,\s*$/g, '')
-                            .trim();
-                          setKeyword(cleaned);
-                        } else {
-                          setKeyword((prev) => (prev ? `${prev}, ${tag}` : tag));
-                        }
-                      }}
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all border flex items-center gap-1 cursor-pointer ${
-                        isSelected
-                          ? 'bg-primary text-white border-primary shadow-sm'
-                          : 'bg-surface-container-low border-outline-variant text-on-surface hover:border-primary/50 hover:bg-surface-container'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[12px]">
-                        {isSelected ? 'check' : 'add'}
-                      </span>
-                      {tag}
-                    </button>
-                  );
-                })
-              )}
-            </div>
+
           </div>
           {/* Country & Optional Region/City Dropdown */}
           <CountryCitySelector
