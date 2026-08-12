@@ -1,10 +1,23 @@
 # 🚀 Lead-AI — Intelligent B2B Sales & Lead Generation Platform
 
-> **Find qualified B2B clients, extract real contact info, and send AI-drafted outreach emails — in seconds.**
+> **An end-to-end AI platform that discovers target B2B clients, scrapes verified contact emails/phones, and automates personalized outreach.**
 
 ---
 
-## ⚡ How It Works (Simple 5-Step Flow)
+## 💡 What Is Lead-AI? (Project Overview)
+
+Finding B2B clients manually is slow and tedious: salespeople spend hours searching Google, sifting through directories, hunting for contact emails, and writing outreach messages one by one.
+
+**Lead-AI automates this entire sales process into a single streamlined dashboard:**
+
+1. 🔍 **Finds Real Clients**: Enter an industry (e.g. *Healthcare SaaS*, *Robotics*, *Logistics*) and country. Lead-AI searches the web and uses **AI (Ollama/Groq)** to filter out blogs, directories, and junk — leaving only genuine operating businesses.
+2. 📧 **Extracts Contact Info**: Automatically crawls company websites to extract direct **Emails**, **Phone Numbers**, and **LinkedIn** links.
+3. 🤖 **Drafts Cold Emails**: AI analyzes each company's website and writes custom outreach emails tailored specifically to them.
+4. ✉️ **Sends Outreach & Tracks Deals**: Send emails with 1-click via Gmail SMTP and manage deals on an interactive Kanban pipeline board.
+
+---
+
+## ⚡ How It Works (5-Step Visual Flow)
 
 `
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
@@ -23,7 +36,7 @@
 | 🔍 **AI Discovery** | Search target companies by industry & country with real-time AI qualification |
 | 📧 **Contact Scraping** | Automatically extracts verified Emails, Phone Numbers, and LinkedIn profiles |
 | 🤖 **AI Email Generator** | Generates personalized B2B cold emails tailored to each specific lead |
-| 📊 **Sales Pipeline** | Track deals from Discovery $ightarrow$ Outreach $ightarrow$ Negotiation $ightarrow$ Closed Won |
+| 📊 **Sales Pipeline** | Track deals from Discovery → Outreach → Negotiation → Closed Won |
 | ✉️ **One-Click Send** | Send emails directly through your own Gmail SMTP |
 
 ---
@@ -107,7 +120,7 @@ You don't need to configure anything! Lead-AI automatically chooses the best ava
    `
 
 #### Option B: Groq Cloud (Ultra Fast)
-1. Get a free API key from [console.groq.com](https://console.groq.com).
+1. Get a free API key from [consolegroq.com](https://console.groq.com).
 2. Set in ackend/.env:
    `ini
    GROQ_API_KEY=your_groq_api_key_here
