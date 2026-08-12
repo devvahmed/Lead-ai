@@ -47,16 +47,16 @@ Lead-AI is a full-stack **B2B Sales & Lead Generation Automation Dashboard** tha
 │          │                   │                        │               │
 │  ┌───────▼───────────────────▼────────────────────────▼──────────┐  │
 │  │             External Services                                    │ │
-│  │  SearXNG (Search) | Ollama/Groq (AI) | Gmail SMTP (Email)      │ │
+│  │  SearXNG/DDG (Search) | Ollama/Groq (AI) | Gmail SMTP (Email)  │ │
 │  └──────────────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────────────┘
 `
 
 ---
 
-## 🔎 Search Engine Architecture & Configuration
+## 🔎 Search Engine Architecture (SearXNG vs. DuckDuckGo)
 
-Lead-AI features a **3-Tier Multi-Engine Search Fallback Architecture**:
+Lead-AI features an **Automated 3-Tier Multi-Engine Search Fallback**:
 
 `
                        ┌───────────────────────────┐
@@ -66,9 +66,10 @@ Lead-AI features a **3-Tier Multi-Engine Search Fallback Architecture**:
                                      ▼
                   ┌────────────────────────────────────┐
                   │ Tier 1: SearXNG MetaSearch Engine  │
-                  │  (Aggregates Google+Bing+Brave)   │
+                  │ (Aggregates 5 Engines: Google,     │
+                  │  Bing, Brave, Qwant, DDG)          │
                   └──────────────────┬─────────────────┘
-                                     │ (If offline / empty)
+                                     │ (If offline / no port)
                                      ▼
                   ┌────────────────────────────────────┐
                   │ Tier 2: Brave Search API           │
@@ -78,7 +79,7 @@ Lead-AI features a **3-Tier Multi-Engine Search Fallback Architecture**:
                                      ▼
                   ┌────────────────────────────────────┐
                   │ Tier 3: DuckDuckGo HTML Direct     │
-                  │  (Zero API key, 100% Automatic)    │
+                  │ (Zero Config - AUTOMATIC FALLBACK) │
                   └──────────────────┬─────────────────┘
                                      │ (If offline / no internet)
                                      ▼
@@ -88,19 +89,64 @@ Lead-AI features a **3-Tier Multi-Engine Search Fallback Architecture**:
                   └────────────────────────────────────┘
 `
 
-### Search Engine Options for New Users:
+### ❓ How & When Are Search Engines Used?
 
-- **Option A: SearXNG Self-Hosted (Recommended — Free & Unlimited)**
+#### 1. SearXNG (Primary Engine — Maximum Results)
+- **When is it used?**: Whenever SearXNG is running locally (port 8085/8080) or hosted on Railway/Cloud.
+- **Why use it?**: It queries **5 engines in parallel** (Google, Bing, Brave, Qwant, DDG) returning **40–60 raw links per page**.
+- **How to run SearXNG locally (Docker)**:
   `ash
   docker run -d -p 8085:8080 searxng/searxng
   `
-  Set SEARXNG_URL=http://localhost:8085 in .env.
+  Set SEARXNG_URL=http://localhost:8085 in ackend/.env.
 
-- **Option B: Cloud-Hosted SearXNG**
-  Set SEARXNG_URL=https://your-searxng-instance.up.railway.app in .env.
+- **How to use Cloud SearXNG (No Docker required)**:
+  Set SEARXNG_URL=https://capable-emotion-production-6cad.up.railway.app in ackend/.env.
 
-- **Option C: Zero-Config DuckDuckGo (Automatic Fallback)**
-  No configuration needed! If SearXNG or Brave API keys are not provided, Lead-AI automatically falls back to DuckDuckGo HTML search.
+#### 2. DuckDuckGo (Automatic Fallback Engine — Zero Setup Required)
+- **When is it used?**: If SearXNG is **not running** and no Brave API key is configured.
+- **Why use it?**: Allows anyone to clone and run the project **without installing Docker or API keys**!
+- **How to use it?**: Do nothing! Lead-AI automatically detects SearXNG is offline and routes queries to DuckDuckGo HTML engine.
+
+---
+
+## 🤖 Local Ollama AI Setup & Configuration
+
+Lead-AI uses **Ollama** for local AI evaluation, company qualification, and contact normalization.
+
+### How to Setup & Run Local Ollama:
+
+#### Step 1: Install Ollama
+Download and install Ollama from [https://ollama.ai](https://ollama.ai).
+
+#### Step 2: Pull an AI Model
+Open your terminal and pull a supported model (e.g. llama3 or qwen2.5:7b):
+`ash
+ollama pull llama3
+`
+
+#### Step 3: Start Ollama Server
+Ollama automatically runs as a background service on http://localhost:11434. If not running, start it:
+`ash
+ollama serve
+`
+
+#### Step 4: Configure Backend Environment (ackend/.env)
+Set your Ollama endpoint in ackend/.env:
+`ini
+# For Local Ollama (running on same PC)
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3:latest
+
+# For Remote Ollama (e.g. GPU Server via Tailscale / LAN)
+# OLLAMA_BASE_URL=http://100.91.220.98:11434/v1
+`
+
+#### Step 5: How Ollama Works in Lead-AI
+1. **Qualification**: Evaluates scraped homepage content to verify if a company is a real business vs directory/blog.
+2. **ICP Alignment**: Checks if the company needs your products/services.
+3. **Outreach Drafting**: Drafts personalized B2B cold emails tailored to each specific company.
 
 ---
 
@@ -159,7 +205,7 @@ Lead-AI/
 | **Node.js** | 18+ | Frontend runtime |
 | **Python** | 3.10+ | Backend runtime |
 | **Git** | Any | Version control |
-| **Ollama** | Latest | Local AI (optional) |
+| **Ollama** | Latest | Local AI (optional, or use Groq) |
 
 ---
 
