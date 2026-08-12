@@ -1,4 +1,4 @@
-# ClientPlus AI — Intelligent B2B Sales Dashboard
+# Lead-AI — Intelligent B2B Sales & Lead Generation Dashboard
 
 > **AI-powered B2B lead discovery, contact enrichment, and outreach automation platform.**
 
@@ -9,9 +9,9 @@
 
 ---
 
-## 📌 What Is This?
+## 📌 What Is Lead-AI?
 
-ClientPlus AI is a full-stack **B2B Sales Automation Dashboard** that:
+Lead-AI is a full-stack **B2B Sales & Lead Generation Automation Dashboard** that:
 
 - 🔍 **Discovers** qualified target companies using AI-powered web search
 - 📧 **Enriches** each lead with real contact emails, phones, and LinkedIn
@@ -54,11 +54,60 @@ ClientPlus AI is a full-stack **B2B Sales Automation Dashboard** that:
 
 ---
 
+## 🔎 Search Engine Architecture & Configuration
+
+Lead-AI features a **3-Tier Multi-Engine Search Fallback Architecture**:
+
+`
+                       ┌───────────────────────────┐
+                       │   User Search Request     │
+                       └─────────────┬─────────────┘
+                                     │
+                                     ▼
+                  ┌────────────────────────────────────┐
+                  │ Tier 1: SearXNG MetaSearch Engine  │
+                  │  (Aggregates Google+Bing+Brave)   │
+                  └──────────────────┬─────────────────┘
+                                     │ (If offline / empty)
+                                     ▼
+                  ┌────────────────────────────────────┐
+                  │ Tier 2: Brave Search API           │
+                  │  (Requires BRAVE_SEARCH_API_KEY)   │
+                  └──────────────────┬─────────────────┘
+                                     │ (If key missing / failed)
+                                     ▼
+                  ┌────────────────────────────────────┐
+                  │ Tier 3: DuckDuckGo HTML Direct     │
+                  │  (Zero API key, 100% Automatic)    │
+                  └──────────────────┬─────────────────┘
+                                     │ (If offline / no internet)
+                                     ▼
+                  ┌────────────────────────────────────┐
+                  │ Tier 4: LLM Synthetic Fallback     │
+                  │  (Tagged as source=ai_generated)   │
+                  └────────────────────────────────────┘
+`
+
+### Search Engine Options for New Users:
+
+- **Option A: SearXNG Self-Hosted (Recommended — Free & Unlimited)**
+  `ash
+  docker run -d -p 8085:8080 searxng/searxng
+  `
+  Set SEARXNG_URL=http://localhost:8085 in .env.
+
+- **Option B: Cloud-Hosted SearXNG**
+  Set SEARXNG_URL=https://your-searxng-instance.up.railway.app in .env.
+
+- **Option C: Zero-Config DuckDuckGo (Automatic Fallback)**
+  No configuration needed! If SearXNG or Brave API keys are not provided, Lead-AI automatically falls back to DuckDuckGo HTML search.
+
+---
+
 ## 📁 Code Structure
 
 `
-clientplus-ai/
-│
+Lead-AI/
 ├── app/                          # Next.js App Router (Frontend)
 │   ├── api/                      # Server-side API routes
 │   │   ├── discover-companies/   # Proxy -> Python /discover-companies
@@ -119,7 +168,7 @@ clientplus-ai/
 ### Step 1 — Clone & Install Frontend Dependencies
 
 `ash
-git clone https://github.com/YOUR_USERNAME/ClientPlus-AI.git
+git clone https://github.com/devvahmed/ClientPlus-AI.git
 cd ClientPlus-AI
 npm install
 `
