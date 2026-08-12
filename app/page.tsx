@@ -75,7 +75,7 @@ export default function DashboardPage() {
 
       {/* Chart + Feed Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <OutreachChart activeOutreach={stats?.active_outreach || 0} />
+        <OutreachChart activeOutreach={stats?.active_outreach || 0} weeklyChart={stats?.weekly_chart} />
         <ActivityFeed activities={(stats as any)?.recent_activity || []} />
       </div>
 

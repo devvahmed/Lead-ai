@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_FILE = os.getenv("DATABASE_FILE", "clientplus_sales.db")
 
@@ -112,6 +112,22 @@ def init_db():
         _safe_add_column(cursor, "clients", col, col_type)
 
     _safe_add_column(cursor, "companies", "ai_enriched_profile", "TEXT")
+
+    # Email History table (per-client generated/sent emails log)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL,
+            company_id INTEGER DEFAULT 1,
+            email_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            subject TEXT,
+            body TEXT NOT NULL,
+            recipient_email TEXT,
+            status TEXT DEFAULT 'Draft',
+            created_at TEXT NOT NULL
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -263,40 +279,175 @@ def get_all_leads(company_id=None):
 def get_dashboard_stats(company_id: int):
     """
     Computes multi-tenant real-time dashboard statistics strictly isolated for company_id.
+    Queries clients table and email_history table.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        total_leads = cursor.execute(
-            "SELECT COUNT(*) FROM leads WHERE company_id = ?", (company_id,)
+        # 1. Total Saved Clients
+        clients_count = cursor.execute(
+            "SELECT COUNT(*) FROM clients WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
 
-        total_enriched = cursor.execute(
-            "SELECT COUNT(*) FROM enriched_contacts WHERE company_id = ?", (company_id,)
+        total_companies_found = clients_count
+
+        # 2. Qualified Leads (Clients with generated emails OR status in Qualified/Contacted/In Negotiation/Won OR trust_score >= 80)
+        clients_with_emails = cursor.execute(
+            "SELECT COUNT(DISTINCT client_id) FROM email_history WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
 
-        total_companies_found = max(total_leads, total_enriched)
+        qualified_status_count = cursor.execute("""
+            SELECT COUNT(*) FROM clients
+            WHERE company_id = ? AND (status IN ('Qualified', 'Contacted', 'In Negotiation', 'Won') OR trust_score >= 80)
+        """, (company_id,)).fetchone()[0]
 
-        qualified_leads = cursor.execute(
-            "SELECT COUNT(*) FROM leads WHERE company_id = ? AND probability_score >= 60", (company_id,)
+        qualified_leads = max(clients_with_emails, qualified_status_count)
+
+        # 3. Active Outreach (Total emails generated + clients currently in Contacted/In Negotiation status)
+        total_emails_generated = cursor.execute(
+            "SELECT COUNT(*) FROM email_history WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
 
-        if total_companies_found > 0 and qualified_leads == 0:
-            qualified_leads = total_enriched
+        contacted_clients_count = cursor.execute("""
+            SELECT COUNT(*) FROM clients
+            WHERE company_id = ? AND status IN ('Contacted', 'In Negotiation', 'Won')
+        """, (company_id,)).fetchone()[0]
 
-        active_outreach = cursor.execute(
-            "SELECT COUNT(*) FROM leads WHERE company_id = ? AND (sent_at IS NOT NULL OR opened = 1 OR clicked = 1 OR replied = 1)", (company_id,)
-        ).fetchone()[0]
+        active_outreach = max(total_emails_generated, contacted_clients_count)
 
+        # 4. Avg Trust Score across saved clients
         avg_score_row = cursor.execute(
-            "SELECT AVG(probability_score) FROM leads WHERE company_id = ?", (company_id,)
+            "SELECT AVG(trust_score) FROM clients WHERE company_id = ?", (company_id,)
         ).fetchone()
-        avg_trust_score = round(float(avg_score_row[0]), 1) if (avg_score_row and avg_score_row[0] is not None) else 0
+        
+        if avg_score_row and avg_score_row[0] is not None and float(avg_score_row[0]) > 0:
+            avg_trust_score = round(float(avg_score_row[0]), 1)
+        else:
+            avg_trust_score = 0.0
 
-        recent_rows = cursor.execute(
-            "SELECT company_name, contact_email, sent_at, probability_score, suggested_action FROM leads WHERE company_id = ? ORDER BY sent_at DESC LIMIT 5", (company_id,)
-        ).fetchall()
-        recent_activity = [dict(r) for r in recent_rows]
+        # 5. Dynamic Recent Activity Log (unified from email_history and clients)
+        activity_list = []
+        
+        # Recent email events
+        recent_emails = cursor.execute("""
+            SELECT eh.label, eh.subject, eh.email_type, eh.created_at, c.name as client_name
+            FROM email_history eh
+            LEFT JOIN clients c ON eh.client_id = c.id
+            WHERE eh.company_id = ?
+            ORDER BY eh.id DESC LIMIT 5
+        """, (company_id,)).fetchall()
+
+        for r in recent_emails:
+            c_name = r["client_name"] or "Prospect"
+            t_name = "Cold Outreach" if r["email_type"] == "outreach" else ("Follow-up" if r["email_type"] == "followup" else "Negotiation Reply")
+            activity_list.append({
+                "title": f"{r['label']} Generated",
+                "subtitle": f"{t_name} for {c_name}",
+                "timestamp": r["created_at"],
+                "icon": "auto_awesome" if r["email_type"] == "outreach" else ("sync" if r["email_type"] == "followup" else "handshake"),
+                "type": r["email_type"]
+            })
+
+        # Recent client saves
+        recent_clients = cursor.execute("""
+            SELECT name, created_at, trust_score, status
+            FROM clients WHERE company_id = ?
+            ORDER BY id DESC LIMIT 5
+        """, (company_id,)).fetchall()
+
+        for c in recent_clients:
+            activity_list.append({
+                "title": f"Prospect Saved: {c['name']}",
+                "subtitle": f"Fit Score: {c['trust_score']}% · Status: {c['status']}",
+                "timestamp": c["created_at"] or datetime.utcnow().isoformat(),
+                "icon": "corporate_fare",
+                "type": "saved"
+            })
+
+        # Sort combined activities by timestamp DESC
+        activity_list.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
+        recent_activity = activity_list[:6]
+
+        # 6. Real Dynamic Weekly Chart Activity Data from email_history & clients for company_id
+        w1_emails, w2_emails, w3_emails, w4_emails = 0, 0, 0, 0
+        w1_calls, w2_calls, w3_calls, w4_calls = 0, 0, 0, 0
+        w1_meetings, w2_meetings, w3_meetings, w4_meetings = 0, 0, 0, 0
+
+        now = datetime.utcnow()
+        week4_start = now - timedelta(days=7)
+        week3_start = now - timedelta(days=14)
+        week2_start = now - timedelta(days=21)
+        week1_start = now - timedelta(days=28)
+
+        # Query all email timestamps for company_id
+        all_emails = cursor.execute("""
+            SELECT created_at FROM email_history WHERE company_id = ?
+        """, (company_id,)).fetchall()
+
+        for em in all_emails:
+            ts_str = em["created_at"]
+            if not ts_str:
+                continue
+            try:
+                if "T" in str(ts_str):
+                    em_date = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00")).replace(tzinfo=None)
+                else:
+                    em_date = datetime.strptime(str(ts_str).split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                em_date = now
+
+            if em_date >= week4_start:
+                w4_emails += 1
+            elif em_date >= week3_start:
+                w3_emails += 1
+            elif em_date >= week2_start:
+                w2_emails += 1
+            elif em_date >= week1_start:
+                w1_emails += 1
+
+        # Query all client status & timestamps for company_id
+        all_clients_status = cursor.execute("""
+            SELECT status, created_at FROM clients WHERE company_id = ?
+        """, (company_id,)).fetchall()
+
+        for cl in all_clients_status:
+            st = cl["status"]
+            ts_str = cl["created_at"]
+            if not ts_str or st not in ("Contacted", "In Negotiation", "Won"):
+                continue
+            try:
+                if "T" in str(ts_str):
+                    cl_date = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00")).replace(tzinfo=None)
+                else:
+                    cl_date = datetime.strptime(str(ts_str).split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                cl_date = now
+
+            if st == "Contacted":
+                if cl_date >= week4_start:
+                    w4_calls += 1
+                elif cl_date >= week3_start:
+                    w3_calls += 1
+                elif cl_date >= week2_start:
+                    w2_calls += 1
+                elif cl_date >= week1_start:
+                    w1_calls += 1
+            elif st in ("In Negotiation", "Won"):
+                if cl_date >= week4_start:
+                    w4_meetings += 1
+                elif cl_date >= week3_start:
+                    w3_meetings += 1
+                elif cl_date >= week2_start:
+                    w2_meetings += 1
+                elif cl_date >= week1_start:
+                    w1_meetings += 1
+
+        weekly_chart = [
+            {"day": "Week 1", "emails": w1_emails, "calls": w1_calls, "meetings": w1_meetings},
+            {"day": "Week 2", "emails": w2_emails, "calls": w2_calls, "meetings": w2_meetings},
+            {"day": "Week 3", "emails": w3_emails, "calls": w3_calls, "meetings": w3_meetings},
+            {"day": "Week 4", "emails": w4_emails, "calls": w4_calls, "meetings": w4_meetings},
+        ]
 
         return {
             "company_id": company_id,
@@ -304,7 +455,9 @@ def get_dashboard_stats(company_id: int):
             "qualified_leads": qualified_leads,
             "active_outreach": active_outreach,
             "avg_trust_score": avg_trust_score,
-            "recent_activity": recent_activity
+            "total_emails_generated": total_emails_generated,
+            "recent_activity": recent_activity,
+            "weekly_chart": weekly_chart
         }
     finally:
         conn.close()
@@ -427,6 +580,64 @@ def update_client(client_id, company_id=1, **kwargs):
 
         row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_email_history(client_id: int, email_type: str, body: str,
+                       subject: str = None, recipient_email: str = None,
+                       company_id: int = 1, status: str = "Draft"):
+    """Saves a new email entry in email_history table with auto-incremented label."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Count existing emails of the same type for this client to calculate label
+        count_row = cursor.execute("""
+            SELECT COUNT(*) as cnt FROM email_history
+            WHERE client_id = ? AND company_id = ? AND email_type = ?
+        """, (client_id, company_id, email_type)).fetchone()
+
+        count = (count_row["cnt"] if count_row else 0) + 1
+
+        # Build readable sequence label
+        if email_type == "outreach":
+            label = f"Cold Outreach {count}"
+        elif email_type == "followup":
+            label = f"Follow-up {count}"
+        elif email_type == "negotiation":
+            label = f"Negotiation Reply {count}"
+        else:
+            label = f"Email {count}"
+
+        created_at = datetime.utcnow().isoformat()
+
+        cursor.execute("""
+            INSERT INTO email_history (
+                client_id, company_id, email_type, label, subject,
+                body, recipient_email, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (client_id, company_id, email_type, label, subject,
+              body, recipient_email, status, created_at))
+
+        conn.commit()
+        last_id = cursor.lastrowid
+        row = cursor.execute("SELECT * FROM email_history WHERE id = ?", (last_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_email_history(client_id: int, company_id: int = 1):
+    """Retrieves all email history entries for a given client_id and company_id."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        rows = cursor.execute("""
+            SELECT * FROM email_history
+            WHERE client_id = ? AND company_id = ?
+            ORDER BY id DESC
+        """, (client_id, company_id)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

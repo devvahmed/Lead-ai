@@ -21,6 +21,7 @@
 /build
 /dist
 /backend/dist
+/backend/build
 *.exe
 *.db
 
@@ -34,22 +35,26 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — NEVER commit real secrets
 .env*
+.env.local
+.env.production
 
 # vercel
 .vercel
 
 # python & virtual environments
 .venv/
-/backend/build/
-/backend/dist/
+venv/
+backend/venv/
+backend/.venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# nested worktrees / subfolders
-/clientplus-ai/
-/clientplus-ai.worktrees/
+# runtime data files
+processed_domains.json
 
 # typescript
 *.tsbuildinfo

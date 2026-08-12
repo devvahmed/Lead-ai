@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 import CountryCitySelector from '@/components/CountryCitySelector';
@@ -670,90 +670,108 @@ export default function DiscoverPage() {
     }
   }, []);
 
+  // ── Ref to track which company IDs have already been queued for enrichment
+  const enqueuedIds = useRef<Set<string>>(new Set());
+
   // ── Controlled Batched Background Enrichment Queue ─────────────────────────
+  // Only starts AFTER streaming is done (loading===false) to prevent race conditions
   useEffect(() => {
+    if (loading) return;  // Wait until streaming is fully complete
     if (!companies || companies.length === 0) return;
 
-    // Find unenriched and non-enriching companies
-    const pending = companies.filter(c => !c.enriched && !c.enriching);
+    // Find companies that haven't been queued yet
+    const pending = companies.filter(c => !enqueuedIds.current.has(c.id) && !c.enriched);
     if (pending.length === 0) return;
 
-    // Process in small batches of 3 to avoid overwhelming backend or target sites
-    const batch = pending.slice(0, 3);
-    const batchIds = new Set(batch.map(b => b.id));
+    // Immediately mark them as queued (in ref, not state) to prevent re-queuing
+    pending.forEach(c => enqueuedIds.current.add(c.id));
 
-    // Immediately mark batch as enriching to prevent duplicate execution
-    setCompanies(prev => prev.map(c => batchIds.has(c.id) ? { ...c, enriching: true } : c));
+    // Mark as enriching in state (UI spinner)
+    const pendingIds = new Set(pending.map(c => c.id));
+    setCompanies(prev => prev.map(c => pendingIds.has(c.id) ? { ...c, enriching: true } : c));
 
-    batch.forEach(async (company) => {
-      try {
-        const res = await fetch('/api/enrich-contacts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            company_name: company.name,
-            website_url: company.website || company.domain
-          })
-        });
-        if (!res.ok) throw new Error('Enrichment failed');
-        const data = await res.json();
+    // Process in batches of 3 with 800ms stagger between batches
+    const BATCH_SIZE = 3;
+    const batches: Company[][] = [];
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      batches.push(pending.slice(i, i + BATCH_SIZE));
+    }
 
-        setCompanies(prev => prev.map(c => {
-          if (c.id !== company.id) return c;
-          const newEmails = (Array.isArray(data.all_emails) && data.all_emails.length > 0)
-            ? data.all_emails
-            : ((Array.isArray(data.emails) && data.emails.length > 0) ? data.emails : []);
-          const primaryEmail = data.primary_email || newEmails[0] || c.email;
-          const finalEmail = primaryEmail || (newEmails.length > 0 ? newEmails.join(', ') : c.email);
-
-          const newPhones = (Array.isArray(data.phones) && data.phones.length > 0) ? data.phones : [];
-          const finalPhone = newPhones.length > 0 ? newPhones[0] : c.phone;
-          const linkedinCompany = data.linkedin_company || data.linkedinUrl || c.linkedin;
-
-          const updatedComp: Company = {
-            ...c,
-            email: finalEmail,
-            phone: finalPhone,
-            linkedin: linkedinCompany || c.linkedin,
-            contactSource: data.contact_page_url ? {
-              url: data.contact_page_url,
-              label: data.source_label || 'Contact Page',
-              context: data.source_context || data.email_source_context
-            } : c.contactSource,
-            enriching: false,
-            enriched: true,
-          };
-
-          // If user saved client while enrichment was in-flight, update server record with new contact info
-          if (c.saved) {
-            fetch('/api/save-client', {
+    batches.forEach((batch, batchIndex) => {
+      setTimeout(() => {
+        batch.forEach(async (company) => {
+          try {
+            const res = await fetch('/api/enrich-contacts', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                name: updatedComp.name,
-                website: updatedComp.website,
-                industry: updatedComp.industry,
-                country: updatedComp.country,
-                trustScore: updatedComp.trustScore,
-                status: 'Pending',
-                email: updatedComp.email || null,
-                phone: updatedComp.phone || null,
-                phones: data.phones || [],
-                linkedin: updatedComp.linkedin || null,
-                contactSource: updatedComp.contactSource || null,
-                logoUrl: updatedComp.logoUrl || null,
-                searchQuery: lastKeyword || keyword || null,
-              }),
-            }).catch((e) => console.warn('Sync enriched contact to client error:', e));
-          }
+                company_name: company.name,
+                website_url: company.website || company.domain
+              })
+            });
+            if (!res.ok) throw new Error('Enrichment failed');
+            const data = await res.json();
 
-          return updatedComp;
-        }));
-      } catch {
-        setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, enriching: false, enriched: true } : c));
-      }
+            setCompanies(prev => prev.map(c => {
+              if (c.id !== company.id) return c;
+              const newEmails = (Array.isArray(data.all_emails) && data.all_emails.length > 0)
+                ? data.all_emails
+                : ((Array.isArray(data.emails) && data.emails.length > 0) ? data.emails : []);
+              const primaryEmail = data.primary_email || newEmails[0] || c.email;
+              const finalEmail = primaryEmail || (newEmails.length > 0 ? newEmails.join(', ') : c.email);
+
+              const newPhones = (Array.isArray(data.phones) && data.phones.length > 0) ? data.phones : [];
+              const finalPhone = newPhones.length > 0 ? newPhones[0] : c.phone;
+              const linkedinCompany = data.linkedin_company || data.linkedinUrl || c.linkedin;
+
+              const updatedComp: Company = {
+                ...c,
+                email: finalEmail,
+                phone: finalPhone,
+                linkedin: linkedinCompany || c.linkedin,
+                contactSource: data.contact_page_url ? {
+                  url: data.contact_page_url,
+                  label: data.source_label || 'Contact Page',
+                  context: data.source_context || data.email_source_context
+                } : c.contactSource,
+                enriching: false,
+                enriched: true,
+              };
+
+              // If user saved client while enrichment was in-flight, update server record
+              if (c.saved) {
+                fetch('/api/save-client', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name: updatedComp.name,
+                    website: updatedComp.website,
+                    industry: updatedComp.industry,
+                    country: updatedComp.country,
+                    trustScore: updatedComp.trustScore,
+                    status: 'Pending',
+                    email: updatedComp.email || null,
+                    phone: updatedComp.phone || null,
+                    phones: data.phones || [],
+                    linkedin: updatedComp.linkedin || null,
+                    contactSource: updatedComp.contactSource || null,
+                    logoUrl: updatedComp.logoUrl || null,
+                    searchQuery: lastKeyword || keyword || null,
+                  }),
+                }).catch((e) => console.warn('Sync enriched contact to client error:', e));
+              }
+
+              return updatedComp;
+            }));
+          } catch {
+            setCompanies(prev => prev.map(c =>
+              c.id === company.id ? { ...c, enriching: false, enriched: true } : c
+            ));
+          }
+        });
+      }, batchIndex * 800);
     });
-  }, [companies]);
+  }, [loading, companies.length]);  // Only re-run when loading state changes or new companies arrive
 
   // ── Auto-persist state to sessionStorage whenever companies/filters update ──
   useEffect(() => {
@@ -816,6 +834,7 @@ export default function DiscoverPage() {
     setErrorFix(null);
     setCompanies([]);
     setStreamProgress(null);
+    enqueuedIds.current = new Set();  // Reset enrichment queue for fresh search
 
     let nextPage = 1;
     const isSubsequent = !forceReset && keyword.trim() === lastKeyword && country === lastCountry && city === lastCity;

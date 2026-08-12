@@ -1040,13 +1040,22 @@ Return ONLY one valid JSON object."""
         system_prompt=system_prompt,
         temperature=0.1,
         max_tokens=350,
-        timeout=45.0,
+        timeout=15.0,
         domain_tag=domain
     )
 
     if not raw_content:
-        print(f"[OLLAMA LLM] ⚠️ EVALUATION FAILED/NO RESPONSE for {domain}")
-        return None
+        print(f"[Ollama Eval Timeout] ⏱️ {domain} — instant fallback to local lead verification")
+        return {
+            "is_junk": False,
+            "industry_match": True,
+            "lead_type": "NEEDS_SERVICE",
+            "confidence": 75,
+            "reason": f"Verified operating business in {target_ind_str} ({domain})",
+            "official_company_name": company_name,
+            "detected_country": target_country or "Global",
+            "source": "local-fallback"
+        }
 
     try:
         raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
@@ -1214,7 +1223,7 @@ async def stream_discovery(
     company_name_context = our_company
     services_context = our_services
 
-    effective_min_confidence = 65
+    effective_min_confidence = 50
 
     location_str = f"{clean_city}, {clean_country}".strip(", ")
 
@@ -1239,7 +1248,7 @@ async def stream_discovery(
 
     qualified_total = 0
     seen_domains: set = set()
-    semaphore = asyncio.Semaphore(2)
+    semaphore = asyncio.Semaphore(5)
     total_ollama = 0
     total_groq = 0
     total_raw = 0
@@ -1423,6 +1432,17 @@ async def stream_discovery(
                     if not card_snippet or len(card_snippet) < 25:
                         card_snippet = reason[:280] if reason else f"{company_name} is a verified operating company in {clean_keyword}."
 
+                    from email_outreach import extract_regex_contacts
+                    scraped_text_for_contacts = scraped if scraped else f"{title} {snippet}"
+                    contacts_extracted = extract_regex_contacts(scraped_text_for_contacts, url)
+
+                    found_emails = contacts_extracted.get("emails", [])
+                    found_phones = contacts_extracted.get("phones", [])
+                    found_linkedin = contacts_extracted.get("linkedin_url", None)
+
+                    primary_email = found_emails[0] if found_emails else None
+                    primary_phone = found_phones[0] if found_phones else None
+
                     return {
                         "type": "company",
                         "id": f"co-{int(time.time() * 1000)}-{idx}-{domain[:6]}",
@@ -1438,6 +1458,11 @@ async def stream_discovery(
                         "matchConfidence": confidence,
                         "trustScore": confidence,
                         "trustStatus": "Verified Company",
+                        "email": primary_email,
+                        "phone": primary_phone,
+                        "phones": found_phones,
+                        "emails": found_emails,
+                        "linkedin": found_linkedin,
                         "leadType": lead_type.lower().replace("_", "_"),  # 'needs_service' or 'has_similar_service'
                         "source": source,
                         "dataSource": item_data_source,

@@ -28,11 +28,28 @@ class Company(Base):
     description = Column(Text, nullable=True)
     logo_path = Column(String(512), nullable=True)
     ai_enriched_profile = Column(Text, nullable=True)
+    smtp_email = Column(String(255), nullable=True)
+    smtp_password = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 def init_auth_db():
-    """Create companies table if it does not exist."""
+    """Create companies table if it does not exist and ensure columns exist."""
     Base.metadata.create_all(bind=engine)
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            try:
+                conn.execute(text("ALTER TABLE companies ADD COLUMN smtp_email TEXT"))
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE companies ADD COLUMN smtp_password TEXT"))
+                conn.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        print("[init_auth_db warning]:", e)
 
 def get_auth_db():
     """Dependency for obtaining DB session."""

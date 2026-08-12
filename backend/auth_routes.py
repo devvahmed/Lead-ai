@@ -41,6 +41,8 @@ class CompanySignupRequest(BaseModel):
     services: Optional[str] = None
     target_customers: Optional[str] = None
     description: Optional[str] = None
+    smtp_email: Optional[str] = None
+    smtp_password: Optional[str] = None
 
 class CompanyLoginRequest(BaseModel):
     email: EmailStr
@@ -57,6 +59,8 @@ class CompanyResponse(BaseModel):
     description: Optional[str] = None
     logo_path: Optional[str] = None
     ai_enriched_profile: Optional[str] = None
+    smtp_email: Optional[str] = None
+    smtp_password: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -68,6 +72,8 @@ class CompanyUpdateRequest(BaseModel):
     services: Optional[str] = None
     target_customers: Optional[str] = None
     description: Optional[str] = None
+    smtp_email: Optional[str] = None
+    smtp_password: Optional[str] = None
 
 class AuthTokenResponse(BaseModel):
     access_token: str
@@ -81,7 +87,9 @@ class DashboardStatsResponse(BaseModel):
     qualified_leads: int
     active_outreach: int
     avg_trust_score: float
+    total_emails_generated: Optional[int] = 0
     recent_activity: List[Any] = []
+    weekly_chart: List[Any] = []
 
 class SuggestedIndustriesResponse(BaseModel):
     company_id: int
@@ -201,7 +209,9 @@ async def signup(company_data: CompanySignupRequest, db: Session = Depends(get_a
         services=company_data.services.strip() if company_data.services else None,
         target_customers=company_data.target_customers.strip() if company_data.target_customers else None,
         description=company_data.description.strip() if company_data.description else None,
-        ai_enriched_profile=ai_profile
+        ai_enriched_profile=ai_profile,
+        smtp_email=company_data.smtp_email.strip() if company_data.smtp_email else None,
+        smtp_password=company_data.smtp_password.strip() if company_data.smtp_password else None
     )
 
     db.add(new_company)

@@ -29,6 +29,19 @@ interface Client {
   search_query?: string | null;
 }
 
+interface EmailHistoryEntry {
+  id: number;
+  client_id: number;
+  company_id: number;
+  email_type: 'outreach' | 'followup' | 'negotiation';
+  label: string;
+  subject?: string;
+  body: string;
+  recipient_email?: string;
+  status: string;
+  created_at: string;
+}
+
 interface ContactMeta {
   email: string;
   source_url?: string;
@@ -200,6 +213,64 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     }
   }, []);
 
+  // Email History State
+  const [emailHistory, setEmailHistory] = useState<EmailHistoryEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedHistoryEmail, setSelectedHistoryEmail] = useState<EmailHistoryEntry | null>(null);
+  const [historyCopied, setHistoryCopied] = useState(false);
+
+  const autoSaveToHistory = useCallback(async (type: 'outreach' | 'followup' | 'negotiation', subj: string, bodyText: string) => {
+    if (!client) return;
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/clients/${client.id}/email-history`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          email_type: type,
+          subject: subj,
+          body: bodyText,
+          recipient_email: contacts.primary_email || client.email || null,
+          status: 'Draft',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.email) {
+        setEmailHistory(prev => [data.email, ...prev]);
+      }
+    } catch (err) {
+      console.warn('[Auto Save Email History Error]', err);
+    }
+  }, [client, contacts.primary_email]);
+
+  const fetchEmailHistory = useCallback(async () => {
+    if (!client) return;
+    setLoadingHistory(true);
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/clients/${client.id}/email-history`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (res.ok && data.history) {
+        setEmailHistory(data.history);
+      }
+    } catch (err) {
+      console.warn('[Fetch Email History Error]', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (activeTab === 'Email History' && client) {
+      fetchEmailHistory();
+    }
+  }, [activeTab, client, fetchEmailHistory]);
+
   const handleSendEmail = useCallback(async () => {
     if (!client || !emailBody || !contacts.primary_email) return;
     setSendingEmail(true);
@@ -240,6 +311,62 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [client, emailSubject, emailBody, contacts.primary_email]);
 
+  // SMTP Real Email Dispatcher & Animated Sent Modal State
+  const [sendingSmtp, setSendingSmtp] = useState(false);
+  const [smtpSuccessMsg, setSmtpSuccessMsg] = useState<string | null>(null);
+  const [showSentModal, setShowSentModal] = useState(false);
+  const [sentModalData, setSentModalData] = useState<{ recipient: string; subject: string; label: string } | null>(null);
+
+  const handleSendRealEmail = useCallback(async () => {
+    if (!client || !emailSubject || !emailBody) return;
+    const cleanDomain = client.website ? client.website.replace(/^https?:\/\//i, '').replace(/\/.*$/, '') : '';
+    const recipient = contacts.primary_email || client.email || (cleanDomain ? `contact@${cleanDomain}` : 'contact@company.com');
+
+    setSendingSmtp(true);
+    setEmailError(null);
+    setSmtpSuccessMsg(null);
+
+    try {
+      const token = getAuthToken();
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          client_id: client.id,
+          recipient_email: recipient,
+          subject: emailSubject,
+          body: emailBody,
+          email_type: 'outreach',
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || 'Failed to deliver real email via SMTP');
+
+      const entryLabel = data.history_entry?.label || 'Cold Outreach 1';
+      setSmtpSuccessMsg(data.message || `Real email delivered to ${recipient}!`);
+      setSentModalData({
+        recipient,
+        subject: emailSubject,
+        label: entryLabel
+      });
+      setShowSentModal(true);
+
+      if (client.status !== 'Contacted') {
+        setClient(prev => prev ? { ...prev, status: 'Contacted' } : null);
+      }
+
+      fetchEmailHistory();
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : 'SMTP Email delivery failed');
+    } finally {
+      setSendingSmtp(false);
+    }
+  }, [client, emailSubject, emailBody, contacts.primary_email, fetchEmailHistory]);
+
   const handleGenerateEmail = useCallback(async () => {
     if (!client) return;
     setEmailGenerating(true);
@@ -271,8 +398,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate outreach email');
 
-      setEmailSubject(data.subject || `${ourServices || 'B2B Solutions'} for ${client.name}`);
-      setEmailBody(data.body || '');
+      const subj = data.subject || `${ourServices || 'B2B Solutions'} for ${client.name}`;
+      const bdy = data.body || '';
+      setEmailSubject(subj);
+      setEmailBody(bdy);
+      autoSaveToHistory('outreach', subj, bdy);
 
       // Step 2 Automation: Auto-update status to 'Contacted' so lead moves on Task Board
       if (client.status !== 'Contacted') {
@@ -288,7 +418,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     } finally {
       setEmailGenerating(false);
     }
-  }, [client, ourServices, pitchType, customKeyword]);
+  }, [client, ourServices, pitchType, customKeyword, autoSaveToHistory]);
 
   const handleGenerateFollowup = useCallback(async () => {
     if (!client) return;
@@ -319,14 +449,17 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate follow-up email');
 
-      setEmailSubject(data.subject || `Following up: ${ourServices || 'B2B Solutions'} for ${client.name}`);
-      setEmailBody(data.body || '');
+      const subj = data.subject || `Following up: ${ourServices || 'B2B Solutions'} for ${client.name}`;
+      const bdy = data.body || '';
+      setEmailSubject(subj);
+      setEmailBody(bdy);
+      autoSaveToHistory('followup', subj, bdy);
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : 'Follow-up email generation failed');
     } finally {
       setEmailGenerating(false);
     }
-  }, [client, ourServices, pitchType, customKeyword]);
+  }, [client, ourServices, pitchType, customKeyword, autoSaveToHistory]);
 
   // Negotiation Assistant State
   const [clientReplyInput, setClientReplyInput] = useState('');
@@ -367,8 +500,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error(data.error || 'Failed to analyze negotiation reply');
 
       setNegotiationResult(data);
+      const subj = data.subject || `Re: Proposal for ${client.name}`;
+      const bdy = data.body || '';
       if (data.subject) setEmailSubject(data.subject);
       if (data.body) setEmailBody(data.body);
+      autoSaveToHistory('negotiation', subj, bdy);
 
       // Auto-update client status to 'In Negotiation' so lead moves on Task Board
       if (client.status !== 'In Negotiation') {
@@ -384,7 +520,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     } finally {
       setAnalyzingNegotiation(false);
     }
-  }, [client, clientReplyInput]);
+  }, [client, clientReplyInput, ourServices, autoSaveToHistory]);
 
   // Load client data
   useEffect(() => {
@@ -1206,18 +1342,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                       <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-100">
                         <div className="flex items-center gap-2 flex-wrap">
                           {/* Primary Direct Send Email Button */}
-                          {contacts.primary_email && (
-                            <button
-                              onClick={handleSendEmail}
-                              disabled={sendingEmail || !emailBody.trim()}
-                              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-[13.5px] transition-all shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer"
-                            >
-                              <span className={`material-symbols-outlined text-[18px] ${sendingEmail ? 'animate-spin' : ''}`}>
-                                {sendingEmail ? 'progress_activity' : 'send'}
-                              </span>
-                              {sendingEmail ? 'Sending Email via Resend...' : `Send Email (${contacts.primary_email})`}
-                            </button>
-                          )}
+                          <button
+                            onClick={handleSendRealEmail}
+                            disabled={sendingSmtp || emailGenerating || !emailBody.trim()}
+                            className="flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13.5px] shadow-md shadow-blue-600/25 transition-all disabled:opacity-50 cursor-pointer"
+                          >
+                            <span className={`material-symbols-outlined text-[19px] ${sendingSmtp ? 'animate-spin' : ''}`}>
+                              {sendingSmtp ? 'sync' : 'send'}
+                            </span>
+                            {sendingSmtp ? 'Sending via Gmail...' : 'Send Real Email (SMTP)'}
+                          </button>
 
                           <button
                             onClick={() => {
@@ -1279,13 +1413,96 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
 
               {/* ── Email History ──────────────────────────────────────── */}
               {activeTab === 'Email History' && (
-                <motion.div key="eh" className="bg-white rounded-2xl p-8 border border-outline-variant soft-shadow flex items-center justify-center"
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ minHeight: 180 }}>
-                  <div className="text-center text-gray-400">
-                    <span className="material-symbols-outlined text-4xl mb-2 block">mail</span>
-                    <p className="text-[14px] font-medium text-gray-600">No emails sent yet</p>
-                    <p className="text-[12px]">AI outreach emails will appear here.</p>
+                <motion.div key="eh" className="bg-white rounded-2xl p-6 border border-outline-variant soft-shadow space-y-4"
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                  
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-[19px]">history</span>
+                      </div>
+                      <div>
+                        <h3 className="text-[15px] font-bold text-on-surface">Email Communication History</h3>
+                        <p className="text-[11.5px] text-gray-500">Structured timeline of generated cold outreach, follow-ups & counter-offers</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={fetchEmailHistory}
+                      disabled={loadingHistory}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                      title="Refresh History"
+                    >
+                      <span className={`material-symbols-outlined text-[18px] ${loadingHistory ? 'animate-spin' : ''}`}>refresh</span>
+                    </button>
                   </div>
+
+                  {loadingHistory && emailHistory.length === 0 ? (
+                    <div className="py-12 text-center text-gray-400">
+                      <span className="material-symbols-outlined text-3xl animate-spin text-purple-500 mb-2 block">sync</span>
+                      <p className="text-[13px] font-medium text-gray-600">Loading email history...</p>
+                    </div>
+                  ) : emailHistory.length === 0 ? (
+                    <div className="py-12 text-center text-gray-400 bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                      <span className="material-symbols-outlined text-4xl mb-2 text-gray-300 block">mail</span>
+                      <p className="text-[14px] font-semibold text-gray-700">No Emails Logged Yet</p>
+                      <p className="text-[12px] text-gray-400 max-w-sm mx-auto mt-1">
+                        Outreach, follow-ups, and negotiation counter-offers generated for {client.name} will automatically be logged here.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {emailHistory.map((item) => {
+                        const badgeStyle = item.email_type === 'outreach'
+                          ? 'bg-green-100 text-green-800 border-green-200'
+                          : item.email_type === 'followup'
+                          ? 'bg-purple-100 text-purple-800 border-purple-200'
+                          : 'bg-amber-100 text-amber-800 border-amber-200';
+
+                        const typeLabel = item.email_type === 'outreach'
+                          ? 'Cold Outreach'
+                          : item.email_type === 'followup'
+                          ? 'Follow-up'
+                          : 'Negotiation Reply';
+
+                        const formattedDate = new Date(item.created_at).toLocaleString('en-US', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                          hour: 'numeric', minute: '2-digit'
+                        });
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setSelectedHistoryEmail(item)}
+                            className="group p-4 rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md bg-white hover:bg-blue-50/30 transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                          >
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-[13.5px] text-gray-900 group-hover:text-blue-700 transition-colors">
+                                  {item.label}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold border ${badgeStyle}`}>
+                                  {typeLabel}
+                                </span>
+                                <span className="text-[11px] text-gray-400 ml-auto sm:ml-0">
+                                  {formattedDate}
+                                </span>
+                              </div>
+                              <p className="text-[13px] font-semibold text-gray-800 truncate">
+                                {item.subject || 'No Subject'}
+                              </p>
+                              <p className="text-[12px] text-gray-500 line-clamp-1 italic">
+                                "{item.body.replace(/\n+/g, ' ')}"
+                              </p>
+                            </div>
+                            <button className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gray-100 group-hover:bg-blue-600 group-hover:text-white text-gray-700 text-[12px] font-semibold transition-all shrink-0">
+                              <span>View</span>
+                              <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -1361,10 +1578,175 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                 ))}
               </div>
             </motion.div>
-
           </div>
         </div>
       </div>
+
+      {/* ── Email Detail Popup Modal ────────────────────────────────────── */}
+      <AnimatePresence>
+        {selectedHistoryEmail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setSelectedHistoryEmail(null)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="relative bg-white rounded-3xl shadow-2xl border border-gray-100 w-full max-w-2xl overflow-hidden z-10 flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-[14px]">
+                    <span className="material-symbols-outlined text-[20px]">drafts</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[16px] font-bold text-gray-900">{selectedHistoryEmail.label}</h3>
+                      <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold border ${
+                        selectedHistoryEmail.email_type === 'outreach'
+                          ? 'bg-green-100 text-green-800 border-green-200'
+                          : selectedHistoryEmail.email_type === 'followup'
+                          ? 'bg-purple-100 text-purple-800 border-purple-200'
+                          : 'bg-amber-100 text-amber-800 border-amber-200'
+                      }`}>
+                        {selectedHistoryEmail.email_type === 'outreach' ? 'Cold Outreach' : selectedHistoryEmail.email_type === 'followup' ? 'Follow-up' : 'Negotiation Reply'}
+                      </span>
+                    </div>
+                    <p className="text-[11.5px] text-gray-400">
+                      Logged on {new Date(selectedHistoryEmail.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedHistoryEmail(null)}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-200/60 transition-colors"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              {/* Modal Body Content */}
+              <div className="p-6 overflow-y-auto space-y-4 custom-scrollbar">
+                {selectedHistoryEmail.recipient_email && (
+                  <div className="flex items-center gap-2 text-[12px] text-gray-600 bg-blue-50/50 p-2.5 rounded-xl border border-blue-100">
+                    <span className="font-semibold text-blue-900">Recipient:</span>
+                    <span className="font-medium text-blue-700">{selectedHistoryEmail.recipient_email}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Subject Line</label>
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-[14px] font-bold text-gray-800">
+                    {selectedHistoryEmail.subject || 'No Subject'}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase text-gray-400 tracking-wider">Email Content</label>
+                  <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 text-[13.5px] text-gray-800 leading-relaxed whitespace-pre-wrap font-sans">
+                    {selectedHistoryEmail.body}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3.5 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                <button
+                  onClick={() => {
+                    const textToCopy = `Subject: ${selectedHistoryEmail.subject || ''}\n\n${selectedHistoryEmail.body}`;
+                    navigator.clipboard.writeText(textToCopy);
+                    setHistoryCopied(true);
+                    setTimeout(() => setHistoryCopied(false), 2000);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-[12.5px] font-semibold shadow-sm transition-all"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {historyCopied ? 'check' : 'content_copy'}
+                  </span>
+                  {historyCopied ? 'Copied to Clipboard!' : 'Copy Full Email'}
+                </button>
+                <button
+                  onClick={() => setSelectedHistoryEmail(null)}
+                  className="px-4 py-2 rounded-xl bg-gray-200 text-gray-700 hover:bg-gray-300 text-[12.5px] font-semibold transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Creative Email Sent Animated Glassmorphism Modal ────────────────────── */}
+      <AnimatePresence>
+        {showSentModal && sentModalData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSentModal(false)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: 30 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+              className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/60 p-8 max-w-md w-full text-center overflow-hidden z-10 flex flex-col items-center"
+            >
+              {/* Glowing Animated Icon Badge */}
+              <motion.div
+                initial={{ scale: 0, rotate: -45 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ delay: 0.15, type: 'spring', stiffness: 400, damping: 20 }}
+                className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 mb-5 relative"
+              >
+                <span className="material-symbols-outlined text-[42px]">mark_email_read</span>
+                <motion.span
+                  animate={{ scale: [1, 1.4, 1], opacity: [0.6, 0, 0.6] }}
+                  transition={{ repeat: Infinity, duration: 2 }}
+                  className="absolute inset-0 rounded-3xl border-2 border-emerald-400"
+                />
+              </motion.div>
+
+              <h3 className="text-2xl font-bold text-gray-900 tracking-tight">Email Delivered!</h3>
+              <p className="text-[13px] text-gray-500 mt-1 max-w-xs leading-relaxed">
+                Your cold outreach email was successfully dispatched via Gmail SMTP to:
+              </p>
+
+              <div className="my-4 w-full p-3.5 bg-gray-50/80 rounded-2xl border border-gray-100 text-left space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-gray-400 font-semibold uppercase tracking-wider">
+                  <span>Recipient</span>
+                  <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                    {sentModalData.label} Logged
+                  </span>
+                </div>
+                <p className="text-[13px] font-bold text-blue-700 truncate">{sentModalData.recipient}</p>
+                <p className="text-[12px] font-medium text-gray-700 truncate pt-1 border-t border-gray-100">
+                  Subject: {sentModalData.subject}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 text-[12px] text-emerald-700 font-semibold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 mb-6">
+                <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                <span>Saved to Client Email History Timeline</span>
+              </div>
+
+              <button
+                onClick={() => setShowSentModal(false)}
+                className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-2xl shadow-md shadow-blue-500/25 transition-all text-[14px] cursor-pointer"
+              >
+                Awesome, Got It!
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

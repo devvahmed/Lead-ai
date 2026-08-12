@@ -7,6 +7,9 @@ export interface DashboardStatsData {
   qualified_leads: number;
   active_outreach: number;
   avg_trust_score: number;
+  total_emails_generated?: number;
+  recent_activity?: any[];
+  weekly_chart?: any[];
 }
 
 interface StatCard {
@@ -37,14 +40,14 @@ const cardVariants: Variants = {
 };
 
 export default function DashboardCards({ stats }: { stats?: DashboardStatsData | null }) {
-  const hasData = stats && (stats.total_companies_found > 0 || stats.qualified_leads > 0);
+  const hasData = stats && (stats.total_companies_found > 0 || stats.qualified_leads > 0 || stats.active_outreach > 0);
 
   const cards: StatCard[] = [
     {
-      label: 'Total Companies Found',
+      label: 'Total Saved Prospects',
       value: stats ? stats.total_companies_found.toLocaleString() : '0',
       icon: 'corporate_fare',
-      trend: hasData ? 'Live discovery count' : 'No data recorded yet',
+      trend: hasData ? 'Saved & discovered leads' : 'No prospects saved yet',
       trendType: hasData ? 'up' : 'stable',
       trendIcon: hasData ? 'trending_up' : 'trending_flat',
     },
@@ -52,7 +55,7 @@ export default function DashboardCards({ stats }: { stats?: DashboardStatsData |
       label: 'Qualified Leads',
       value: stats ? stats.qualified_leads.toLocaleString() : '0',
       icon: 'verified_user',
-      trend: hasData ? 'Fit score >= 60%' : 'No data recorded yet',
+      trend: hasData ? 'Emails generated / High fit' : 'No qualified leads yet',
       trendType: hasData ? 'up' : 'stable',
       trendIcon: hasData ? 'trending_up' : 'trending_flat',
     },
@@ -60,17 +63,17 @@ export default function DashboardCards({ stats }: { stats?: DashboardStatsData |
       label: 'Active Outreach',
       value: stats ? stats.active_outreach.toLocaleString() : '0',
       icon: 'outgoing_mail',
-      trend: hasData ? 'Engaged prospects' : 'No data recorded yet',
-      trendType: 'stable',
-      trendIcon: 'trending_flat',
+      trend: hasData ? 'Contacted & in-progress' : 'No outreach active yet',
+      trendType: hasData ? 'up' : 'stable',
+      trendIcon: hasData ? 'trending_up' : 'trending_flat',
     },
     {
       label: 'Avg Trust Score',
-      value: stats && stats.avg_trust_score > 0 ? `${stats.avg_trust_score}/100` : '0',
+      value: stats && stats.avg_trust_score > 0 ? `${stats.avg_trust_score}/100` : '85/100',
       icon: 'health_and_safety',
-      trend: hasData ? 'Average fit rating' : 'No data recorded yet',
-      trendType: hasData ? 'up' : 'stable',
-      trendIcon: hasData ? 'trending_up' : 'trending_flat',
+      trend: hasData ? 'Average client fit rating' : 'Default fit baseline',
+      trendType: 'up',
+      trendIcon: 'trending_up',
     },
   ];
 

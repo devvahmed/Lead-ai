@@ -12,6 +12,9 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Tuple
 import urllib.request
 import urllib.parse
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -1257,6 +1260,152 @@ async def api_update_client(client_id: int, data: UpdateClientRequest, current_c
     if not updated:
         raise HTTPException(status_code=404, detail="Client update failed or not found")
     return {"success": True, "client": updated}
+
+class SaveEmailHistoryRequest(BaseModel):
+    email_type: str
+    body: str
+    subject: Optional[str] = None
+    recipient_email: Optional[str] = None
+    status: Optional[str] = "Draft"
+
+@app.post("/api/clients/{client_id}/email-history")
+async def api_save_client_email_history(
+    client_id: int,
+    data: SaveEmailHistoryRequest,
+    current_company: Company = Depends(get_current_company_optional)
+):
+    entry = database.save_email_history(
+        client_id=client_id,
+        email_type=data.email_type,
+        body=data.body,
+        subject=data.subject,
+        recipient_email=data.recipient_email,
+        company_id=current_company.id,
+        status=data.status or "Draft"
+    )
+    return {"success": True, "email": entry}
+
+@app.get("/api/clients/{client_id}/email-history")
+async def api_get_client_email_history(
+    client_id: int,
+    current_company: Company = Depends(get_current_company_optional)
+):
+    history = database.get_email_history(
+        client_id=client_id,
+        company_id=current_company.id
+    )
+    return {"success": True, "history": history}
+
+
+class SendRealEmailRequest(BaseModel):
+    client_id: int
+    recipient_email: str
+    subject: str
+    body: str
+    email_type: Optional[str] = "outreach"
+
+
+@app.post("/api/send-email")
+def send_real_email_endpoint(
+    req: SendRealEmailRequest,
+    current_company: Company = Depends(get_current_company)
+):
+    """
+    Sends a REAL email via 100% free SMTP using current_company's SMTP credentials
+    or fallback to system .env SMTP credentials.
+    Automatically logs the sent email into email_history and updates client status to 'Contacted'.
+    """
+    # 1. Determine SMTP Credentials
+    # Use custom company credentials only if BOTH email and password are provided.
+    # Otherwise, fall back cleanly to system default SMTP_EMAIL and SMTP_PASSWORD.
+    c_email = (current_company.smtp_email or "").strip()
+    c_pass = (current_company.smtp_password or "").strip().replace(" ", "")
+
+    if c_email and c_pass:
+        smtp_email = c_email
+        smtp_password = c_pass
+    else:
+        smtp_email = os.getenv("SMTP_EMAIL", "").strip()
+        smtp_password = os.getenv("SMTP_PASSWORD", "").strip().replace(" ", "")
+
+    if not smtp_email or not smtp_password:
+        raise HTTPException(
+            status_code=400,
+            detail="SMTP email and password are not configured."
+        )
+
+    # 2. Build MIME Message
+    msg = MIMEMultipart("alternative")
+    sender_name = current_company.name or "Outreach Manager"
+    msg["From"] = f"{sender_name} <{smtp_email}>"
+    msg["To"] = req.recipient_email.strip()
+    msg["Subject"] = req.subject.strip()
+
+    # Plain text body
+    msg.attach(MIMEText(req.body, "plain", "utf-8"))
+
+    # HTML formatted version
+    formatted_html_body = req.body.replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
+    html_content = f"""
+    <div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; rounded: 12px;">
+        {formatted_html_body}
+        <br><br>
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="font-size: 11px; color: #888;">Sent securely via {sender_name}</p>
+    </div>
+    """
+    msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+    # 3. Send Email via Gmail SMTP Server (port 587 TLS)
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15.0)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(smtp_email, smtp_password)
+        server.sendmail(smtp_email, [req.recipient_email.strip()], msg.as_string())
+        server.quit()
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(
+            status_code=400,
+            detail="Gmail SMTP authentication failed. Please verify your 16-digit Google App Password."
+        )
+    except Exception as e:
+        print(f"[SMTP Send Error for company {current_company.id}]:", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send email via SMTP: {str(e)}"
+        )
+
+    # 4. Auto-log into Email History
+    history_entry = database.save_email_history(
+        client_id=req.client_id,
+        email_type=req.email_type or "outreach",
+        subject=req.subject,
+        body=req.body,
+        recipient_email=req.recipient_email,
+        status="sent",
+        company_id=current_company.id
+    )
+
+    # 5. Update client status to 'Contacted' in database
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE clients SET status = 'Contacted' WHERE id = ? AND company_id = ? AND status = 'Pending'",
+            (req.client_id, current_company.id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "success": True,
+        "message": f"Real email delivered successfully to {req.recipient_email}!",
+        "sender_email": smtp_email,
+        "history_entry": history_entry
+    }
 
 # ─── Include Discover Router ──────────────────────────────────────────────────
 from discover import discover_router

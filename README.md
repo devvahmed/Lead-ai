@@ -1,36 +1,182 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ClientPlus AI — Intelligent B2B Sales Dashboard
 
-## Getting Started
+> **AI-powered B2B lead discovery, contact enrichment, and outreach automation platform.**
 
-First, run the development server:
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Ollama](https://img.shields.io/badge/AI-Ollama%20%2F%20Groq-purple)](https://ollama.ai/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-```bash
+---
+
+## 📌 What Is This?
+
+ClientPlus AI is a full-stack **B2B Sales Automation Dashboard** that:
+
+- 🔍 **Discovers** qualified target companies using AI-powered web search
+- 📧 **Enriches** each lead with real contact emails, phones, and LinkedIn
+- 🤖 **Generates** personalized cold outreach emails using LLM (Ollama/Groq)
+- 📊 **Tracks** your entire sales pipeline (Discovery → Outreach → Negotiation → Won)
+- 📅 **Task Board** — Kanban-style deal management with AI negotiation assistant
+
+---
+
+## 🏗️ Architecture Overview
+
+`
+┌─────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (Next.js 16)                        │
+│                                                                       │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐  ┌──────────┐  │
+│  │  /discover  │  │  /clients    │  │  /tasks     │  │/settings │  │
+│  │  AI Search  │  │  CRM Cards   │  │  Kanban     │  │ Profile  │  │
+│  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘  └──────────┘  │
+│         │                │                  │                         │
+│  ┌──────▼──────────────────────────────────▼───────────────────┐    │
+│  │               Next.js API Routes (/app/api/*)                │    │
+│  └──────────────────────────────┬────────────────────────────────┘   │
+└─────────────────────────────────┼────────────────────────────────────┘
+                                  │ HTTP (localhost:8000)
+┌─────────────────────────────────▼────────────────────────────────────┐
+│                      BACKEND (FastAPI + Python)                       │
+│                                                                       │
+│  ┌───────────────┐  ┌──────────────────┐  ┌────────────────────┐    │
+│  │  discover.py  │  │ email_outreach.py│  │   database.py       │   │
+│  │  AI Discovery │  │ Contact Scraper  │  │   SQLite ORM        │   │
+│  └───────┬───────┘  └────────┬─────────┘  └─────────┬──────────┘   │
+│          │                   │                        │               │
+│  ┌───────▼───────────────────▼────────────────────────▼──────────┐  │
+│  │             External Services                                    │ │
+│  │  SearXNG (Search) | Ollama/Groq (AI) | Gmail SMTP (Email)      │ │
+│  └──────────────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────────────┘
+`
+
+---
+
+## 📁 Code Structure
+
+`
+clientplus-ai/
+│
+├── app/                          # Next.js App Router (Frontend)
+│   ├── api/                      # Server-side API routes
+│   │   ├── discover-companies/   # Proxy -> Python /discover-companies
+│   │   ├── enrich-contacts/      # Proxy -> Python /enrich-contacts
+│   │   ├── save-client/          # Proxy -> Python /api/save-client
+│   │   ├── clients/              # CRUD for saved leads
+│   │   ├── generate-outreach-email/  # AI email drafting
+│   │   ├── send-email/           # Gmail SMTP dispatcher
+│   │   ├── analyze-negotiation/  # AI negotiation reply helper
+│   │   ├── suggest-industries/   # AI industry tag suggestions
+│   │   ├── deep-enrich/          # Stage 2 deep contact crawler
+│   │   └── auth/                 # Login / Signup / JWT
+│   │
+│   ├── discover/page.tsx         # 🔍 Company Discovery Page (main)
+│   ├── clients/page.tsx          # 📋 Saved Clients CRM List
+│   ├── clients/[id]/page.tsx     # 👤 Client Detail + Outreach + History
+│   ├── tasks/page.tsx            # 📅 Kanban Task Board
+│   ├── settings/page.tsx         # ⚙️  Company Profile Settings
+│   ├── login/page.tsx            # 🔐 Login Page
+│   ├── signup/page.tsx           # 📝 Signup Page
+│   ├── layout.tsx                # Root layout (sidebar nav)
+│   └── globals.css               # Global CSS + Material Design tokens
+│
+├── backend/                      # Python FastAPI Backend
+│   ├── email_outreach.py         # Main FastAPI app + all routes
+│   ├── discover.py               # Company Discovery Engine
+│   ├── database.py               # SQLite Database Layer
+│   ├── auth_models.py            # User & Company auth models
+│   ├── auth_routes.py            # JWT auth endpoints (login/signup)
+│   ├── auth_utils.py             # Password hashing + JWT helpers
+│   ├── requirements.txt          # Python dependencies
+│   └── .env.example              # Backend environment template
+│
+├── components/                   # Reusable React Components
+├── lib/                          # Frontend auth helpers
+├── .env.example                  # Frontend environment template
+├── .gitignore                    # Git ignore rules
+├── next.config.ts                # Next.js configuration
+├── package.json                  # Node.js dependencies
+└── README.md                     # Project Documentation
+`
+
+---
+
+## ⚙️ Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **Node.js** | 18+ | Frontend runtime |
+| **Python** | 3.10+ | Backend runtime |
+| **Git** | Any | Version control |
+| **Ollama** | Latest | Local AI (optional) |
+
+---
+
+## 🚀 Quick Start (Local Development)
+
+### Step 1 — Clone & Install Frontend Dependencies
+
+`ash
+git clone https://github.com/YOUR_USERNAME/ClientPlus-AI.git
+cd ClientPlus-AI
+npm install
+`
+
+### Step 2 — Configure Frontend Environment
+
+`ash
+cp .env.example .env.local
+`
+
+### Step 3 — Configure & Install Backend Dependencies
+
+`ash
+cp backend/.env.example backend/.env
+cd backend
+python -m venv venv
+# On Windows:
+.\venv\Scripts\activate
+# On Mac/Linux:
+source venv/bin/activate
+
+pip install -r requirements.txt
+playwright install chromium
+`
+
+### Step 4 — Run Backend Server
+
+`ash
+cd backend
+uvicorn email_outreach:app --host 127.0.0.1 --port 8000 --reload
+`
+
+### Step 5 — Run Frontend Server
+
+`ash
+# In project root
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000 in your browser!
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🌐 Production Deployment
 
-## Learn More
+### Option A: Vercel (Frontend) + Railway (Backend)
+- Deploy frontend to Vercel pointing NEXT_PUBLIC_BACKEND_URL to Railway.
+- Deploy backend repository to Railway with Docker or Python runtime.
 
-To learn more about Next.js, take a look at the following resources:
+### Option B: VPS Deployment (Ubuntu + Nginx + PM2)
+- Build frontend with 
+pm run build
+- Run FastAPI via uvicorn / gunicorn with PM2 process manager
+- Configure Nginx reverse proxy for SSL and API routing.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🤝 Contributing & License
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT License — free to use and modify for commercial or private projects.

@@ -3,6 +3,11 @@
 import { motion } from 'framer-motion';
 
 export interface ActivityItem {
+  title?: string;
+  subtitle?: string;
+  timestamp?: string;
+  icon?: string;
+  type?: string;
   company_name?: string;
   contact_email?: string;
   sent_at?: string;
@@ -41,19 +46,27 @@ export default function ActivityFeed({ activities = [] }: { activities?: Activit
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {activities.map((item, i) => (
-              <div key={i} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-surface-container-low transition-colors">
-                <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <span className="material-symbols-outlined text-[16px]">domain</span>
+          <div className="space-y-3">
+            {activities.map((item, i) => {
+              const displayTitle = item.title || item.company_name || 'Prospect Company';
+              const displaySubtitle = item.subtitle || item.suggested_action || 'Qualified by AI Discovery';
+              const iconName = item.icon || 'corporate_fare';
+
+              return (
+                <div key={i} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-surface-container-low transition-colors">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="material-symbols-outlined text-[16px]">{iconName}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-on-surface truncate">{displayTitle}</p>
+                    <p className="text-[11px] text-secondary truncate">{displaySubtitle}</p>
+                    {item.probability_score ? (
+                      <span className="text-[10px] text-primary font-medium">Fit Score: {item.probability_score}%</span>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-on-surface truncate">{item.company_name || 'Prospect Company'}</p>
-                  <p className="text-[11px] text-secondary truncate">{item.suggested_action || 'Qualified by AI Discovery'}</p>
-                  <span className="text-[10px] text-primary font-medium">Fit Score: {item.probability_score || 70}%</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

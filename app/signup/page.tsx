@@ -14,6 +14,8 @@ export default function SignupPage() {
     services: '',
     target_customers: '',
     description: '',
+    smtp_email: '',
+    smtp_password: '',
   });
 
   const [loading, setLoading] = useState(false);
@@ -196,6 +198,45 @@ export default function SignupPage() {
               placeholder="Short summary of your business mission and ROI value proposition"
               className="w-full px-3.5 py-2 bg-surface-container-low border border-outline-variant rounded-2xl text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
             />
+          </div>
+
+          {/* SMTP Gmail Configuration Section (Optional) */}
+          <div className="p-4 bg-blue-50/70 rounded-2xl border border-blue-100 space-y-3 mt-4">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-blue-600 text-[20px]">mark_email_read</span>
+              <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wider">Free SMTP Email Dispatcher (Optional)</h3>
+            </div>
+            <p className="text-[11.5px] text-blue-700 leading-snug">
+              To send real emails directly from your Gmail inbox (0 cost), enter your Gmail and Google App Password:
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                  Gmail Address
+                </label>
+                <input
+                  type="email"
+                  name="smtp_email"
+                  value={formData.smtp_email}
+                  onChange={onChange}
+                  placeholder="yourcompany@gmail.com"
+                  className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                  16-Digit Google App Password
+                </label>
+                <input
+                  type="password"
+                  name="smtp_password"
+                  value={formData.smtp_password}
+                  onChange={onChange}
+                  placeholder="abcd efgh ijkl mnop"
+                  className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
           </div>
 
           <button
