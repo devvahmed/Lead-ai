@@ -4,6 +4,13 @@ An end-to-end AI platform that discovers target B2B clients, scrapes verified co
 
 ---
 
+## 📄 Project Deliverables & Reports
+
+- 📑 **[Final Project Report](PROJECT_REPORT.md)**: Detailed report explaining project architecture, methodology, pipeline design, and conclusions.
+- 📊 **[Accuracy & Performance Sheet](ACCURACY_SHEET.md)**: Performance metrics, classification accuracy confusion matrix, and extraction recall benchmarks.
+
+---
+
 ## 💡 What Is Lead-AI?
 
 Finding B2B clients manually is slow and tedious — salespeople spend hours searching Google, sifting through directories, hunting for contact emails, and writing outreach messages one by one.
@@ -147,6 +154,8 @@ Lead-AI/
 │   ├── discover.py       # AI Search & Qualification Engine
 │   ├── email_outreach.py # Contact Scraper & Email Handler
 │   └── database.py       # SQLite Storage
+├── PROJECT_REPORT.md     # 📑 Comprehensive Final Project Report
+├── ACCURACY_SHEET.md     # 📊 Model Accuracy & Evaluation Sheet
 └── README.md             # Project Documentation
 `
 
