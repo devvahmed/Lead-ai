@@ -143,7 +143,7 @@ GROQ_MODEL=llama-3.1-8b-instant
 
 ## 📁 Project Structure
 
-`
+`	ext
 Lead-AI/
 ├── app/                  # Next.js Frontend pages & API routes
 │   ├── discover/         # 🔍 Lead Discovery Page

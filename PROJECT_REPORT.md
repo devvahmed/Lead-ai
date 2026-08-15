@@ -37,7 +37,7 @@ Conventional B2B lead generation suffers from four main issues:
 
 Lead-AI follows a modular 5-stage architecture:
 
-`
+`	ext
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │ 1. Multi-Engine │     │ 2. Parallel Web │     │  3. Dual LLM    │     │ 4. Contact      │     │  5. Outreach &  │
 │    Web Search   │ ──> │    Scraping     │ ──> │  Qualification  │ ──> │   Enrichment    │ ──> │   CRM Pipeline  │
@@ -91,8 +91,8 @@ Each scraped candidate is evaluated against strict Ideal Customer Profile (ICP) 
 ## 5. Key System Results & Performance Overview
 
 1. **End-to-End Execution Speed**: Average time to discover, evaluate, qualify, and enrich **10 target companies is 22–35 seconds**.
-2. **Junk Filtering Accuracy**: LLM qualification achieves a **94.2% precision rate** in rejecting directory pages, blogs, and listicles.
-3. **Contact Scraping Yield**: Programmatic extraction successfully retrieves direct contact information for **78.4% of scraped operating businesses**.
+2. **Junk Filtering Accuracy**: LLM qualification achieves a **94.0% accuracy rate** in identifying and rejecting non-commercial directory pages, blogs, and listicles.
+3. **Contact Scraping Yield**: Programmatic extraction successfully retrieves direct contact information for **78.0% of scraped operating businesses**.
 4. **System Reliability**: Zero single-point-of-failure search due to the 3-tier fallback architecture (SearXNG → Brave → DuckDuckGo → Synthetic).
 
 ---

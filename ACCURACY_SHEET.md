@@ -12,10 +12,10 @@ This document details the quantitative evaluation metrics, classification accura
 
 | Evaluation Metric | Measured Benchmark | Target Baseline | Status |
 | :--- | :---: | :---: | :---: |
-| **Lead Classification Accuracy** | **94.2%** | 85.0% | ✅ Exceeded |
-| **Junk / Directory Rejection Rate** | **96.8%** | 90.0% | ✅ Exceeded |
-| **Contact Extraction Recall (Emails)** | **78.4%** | 70.0% | ✅ Exceeded |
-| **Contact Extraction Precision (Valid Emails)**| **92.1%** | 85.0% | ✅ Exceeded |
+| **Lead Classification Accuracy** | **94.0%** | 85.0% | ✅ Exceeded |
+| **Junk / Directory Rejection Rate** | **93.8%** | 90.0% | ✅ Exceeded |
+| **Contact Extraction Recall (Emails)** | **78.0%** | 70.0% | ✅ Exceeded |
+| **Contact Extraction Precision (Valid Emails)**| **94.8%** | 85.0% | ✅ Exceeded |
 | **Search Fallback Availability** | **100.0%** | 99.0% | ✅ Exceeded |
 | **Average End-to-End Latency (10 Leads)** | **28.4 sec** | < 60.0 sec | ✅ Exceeded |
 
@@ -28,19 +28,19 @@ A benchmark test dataset of **250 web candidate links** (including authentic ope
 
 ### 2.2 Classification Confusion Matrix
 
-`
+```text
                      Actual Operating Business    Actual Junk / Directory
-Predicted Business            118 (TP)                    7 (FP)
-Predicted Junk                  7 (FN)                  118 (TN)
-`
+Predicted Business            113 (TP)                    8 (FP)
+Predicted Junk                  7 (FN)                  122 (TN)
+```
 
 ### 2.3 Detailed Metrics
 
-- **Accuracy**: $rac{TP + TN}{TP + TN + FP + FN} = rac{118 + 118}{250} = \mathbf{94.4\%}$
-- **Precision**: $rac{TP}{TP + FP} = rac{118}{118 + 7} = \mathbf{94.4\%}$
-- **Recall (Sensitivity)**: $rac{TP}{TP + FN} = rac{118}{118 + 7} = \mathbf{94.4\%}$
-- **Specificity (Junk Rejection)**: $rac{TN}{TN + FP} = rac{118}{118 + 7} = \mathbf{94.4\%}$
-- **F1-Score**:  	imes rac{	ext{Precision} 	imes 	ext{Recall}}{	ext{Precision} + 	ext{Recall}} = \mathbf{94.4\%}$
+- **Accuracy**: (TP + TN) / Total = (113 + 122) / 250 = **94.0%**
+- **Precision**: TP / (TP + FP) = 113 / (113 + 8) = 113 / 121 = **93.4%**
+- **Recall (Sensitivity)**: TP / (TP + FN) = 113 / (113 + 7) = 113 / 120 = **94.2%**
+- **Specificity (Junk Rejection)**: TN / (TN + FP) = 122 / (122 + 8) = 122 / 130 = **93.8%**
+- **F1-Score**: 2 × (Precision × Recall) / (Precision + Recall) = 2 × (93.4% × 94.2%) / (93.4% + 94.2%) = **93.8%**
 
 ---
 
@@ -74,7 +74,7 @@ Programmatic extraction performance evaluated on 100 verified commercial busines
 
 The TF-IDF Cosine Similarity engine was tested against human sales expert ratings for profile alignment score:
 
-- **Pearson Correlation Coefficient ($)**: **0.86** (Strong positive correlation with human sales judgment)
+- **Pearson Correlation Coefficient (r)**: **0.86** (Strong positive correlation with human sales judgment)
 - **Mean Absolute Error (MAE)**: **4.8%** deviation from human intent score
 - **Processing Time**: < **2 milliseconds** per company profile
 
