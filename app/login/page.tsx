@@ -8,16 +8,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async (loginEmail: string, loginPass: string, isDemo = false) => {
+  const handleLogin = async (loginEmail: string, loginPass: string) => {
     setError(null);
-    if (isDemo) {
-      setDemoLoading(true);
-    } else {
-      setLoading(true);
-    }
+    setLoading(true);
 
     try {
       const res = await fetch('/api/auth/login', {
@@ -41,7 +36,6 @@ export default function LoginPage() {
       setError(err.message || 'An unexpected error occurred.');
     } finally {
       setLoading(false);
-      setDemoLoading(false);
     }
   };
 
@@ -51,11 +45,7 @@ export default function LoginPage() {
       setError('Please fill in both email and password.');
       return;
     }
-    handleLogin(email, password, false);
-  };
-
-  const onDemoClick = () => {
-    handleLogin('contact@wtechx.ai', 'SecurePassword123!', true);
+    handleLogin(email, password);
   };
 
   return (
@@ -76,29 +66,6 @@ export default function LoginPage() {
             <p className="text-xs font-medium text-error leading-relaxed">{error}</p>
           </div>
         )}
-
-        {/* Demo Account Button */}
-        <div className="mb-6">
-          <button
-            type="button"
-            onClick={onDemoClick}
-            disabled={loading || demoLoading}
-            className="w-full py-3 px-4 bg-amber-50 hover:bg-amber-100/80 border border-amber-300/80 text-amber-900 font-semibold rounded-2xl transition-all duration-200 shadow-sm flex items-center justify-center gap-2 group disabled:opacity-50 cursor-pointer"
-          >
-            {demoLoading ? (
-              <span className="material-symbols-outlined animate-spin text-[20px]">sync</span>
-            ) : (
-              <span className="material-symbols-outlined text-amber-700 group-hover:scale-110 transition-transform">bolt</span>
-            )}
-            <span>Try Demo Account (WTechX)</span>
-          </button>
-          <p className="text-[11px] text-center text-secondary mt-1.5">Instantly explore with pre-configured WTechX AI dataset</p>
-        </div>
-
-        <div className="relative flex items-center justify-center mb-6">
-          <div className="border-t border-outline-variant w-full" />
-          <span className="bg-white px-3 text-[11px] text-secondary font-medium uppercase tracking-wider absolute">or sign in with email</span>
-        </div>
 
         {/* Login Form */}
         <form onSubmit={onSubmit} className="space-y-4">
@@ -142,7 +109,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || demoLoading}
+            disabled={loading}
             className="w-full py-3 bg-primary hover:bg-primary/90 text-white font-semibold rounded-2xl transition-all shadow-md shadow-primary/20 mt-2 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {loading ? (

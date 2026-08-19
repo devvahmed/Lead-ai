@@ -272,7 +272,7 @@ def get_current_company_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: Session = Depends(get_auth_db)
 ) -> Company:
-    """Decodes JWT bearer token if present; falls back to default company (id=1) for dev/guest access."""
+    """Decodes JWT bearer token if present; raises 401 if no valid authenticated company found."""
     if credentials and credentials.credentials:
         payload = decode_access_token(credentials.credentials)
         if payload and "sub" in payload:
@@ -283,10 +283,10 @@ def get_current_company_optional(
                     return co
             except Exception:
                 pass
-    fallback = db.query(Company).first()
-    if fallback:
-        return fallback
-    return Company(id=1, name="Default Company", email="admin@example.com")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required. Please sign in to your company account."
+    )
 
 
 @router.put("/profile", response_model=CompanyResponse)
