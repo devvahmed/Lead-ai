@@ -41,6 +41,8 @@ export default function LoginPage() {
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Synchronous guard — prevents double-submit if React re-render is delayed
+    if (loading) return;
     if (!email || !password) {
       setError('Please fill in both email and password.');
       return;
@@ -68,7 +70,7 @@ export default function LoginPage() {
         )}
 
         {/* Login Form */}
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} method="POST" className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
               Work Email Address

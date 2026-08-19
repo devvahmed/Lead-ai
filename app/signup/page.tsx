@@ -27,6 +27,8 @@ export default function SignupPage() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Synchronous guard — prevents double-submit if React re-render is delayed
+    if (loading) return;
     setError(null);
 
     if (!formData.name || !formData.email || !formData.password) {
@@ -80,7 +82,7 @@ export default function SignupPage() {
         )}
 
         {/* Signup Form */}
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} method="POST" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
