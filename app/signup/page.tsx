@@ -245,7 +245,10 @@ export default function SignupPage() {
             className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-semibold rounded-2xl transition-all shadow-md shadow-primary/20 mt-4 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {loading ? (
-              <span className="material-symbols-outlined animate-spin text-[20px]">sync</span>
+              <>
+                <span className="material-symbols-outlined animate-spin text-[20px]">sync</span>
+                <span>Creating Account & Building AI Profile…</span>
+              </>
             ) : (
               <>
                 <span>Register & Open Dashboard</span>
