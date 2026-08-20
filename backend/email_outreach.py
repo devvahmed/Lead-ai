@@ -54,6 +54,18 @@ from auth_routes import router as auth_router, get_current_company, get_current_
 init_auth_db()
 app.include_router(auth_router)
 
+# ─── CORS Middleware ──────────────────────────────────────────────────────────
+# Auth uses Bearer token headers (not cookies) → allow_credentials=False, allow_origins="*"
+# This allows browsers on other LAN devices (e.g. 192.168.100.x) to call this API
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],       # All origins allowed — safe because auth is Bearer token, not cookie
+    allow_credentials=False,   # Must be False when allow_origins=["*"]
+    allow_methods=["*"],       # GET, POST, PUT, DELETE, OPTIONS, etc.
+    allow_headers=["*"],       # Authorization, Content-Type, etc.
+)
+
 
 # ─── Pydantic Schemas ──────────────────────────────────────────────────────────
 class OutreachRequest(BaseModel):

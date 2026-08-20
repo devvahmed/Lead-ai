@@ -18,7 +18,7 @@ export async function getAuthenticatedCompany(req: NextRequest): Promise<Authent
     return null;
   }
 
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const cleanBackendUrl = backendUrl.replace(/\/$/, '');
 
   try {

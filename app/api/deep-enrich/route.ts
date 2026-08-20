@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const envBackend = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+    const envBackend = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
     const backendUrl = (!envBackend || envBackend.startsWith('/')) ? 'http://localhost:8000' : envBackend.replace(/\/$/, '');
 
     const res = await fetch(`${backendUrl}/deep-enrich`, {

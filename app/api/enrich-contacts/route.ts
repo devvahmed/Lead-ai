@@ -53,7 +53,7 @@ async function processEnrichment(companyName: string, websiteUrl: string) {
     finalWebsite = `https://www.${slug}.com`;
   }
 
-  const envBackend = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+  const envBackend = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
   const backendUrl = (!envBackend || envBackend.startsWith('/')) ? 'http://localhost:8000' : envBackend.replace(/\/$/, '');
   let backendData: BackendEnrichResponse;
 
