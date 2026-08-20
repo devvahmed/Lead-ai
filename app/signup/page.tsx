@@ -25,8 +25,11 @@ export default function SignupPage() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     // Synchronous guard — prevents double-submit if React re-render is delayed
     if (loading) return;
     setError(null);
@@ -37,6 +40,7 @@ export default function SignupPage() {
     }
 
     setLoading(true);
+    console.log('[Signup] Submitting signup for:', formData.email);
     try {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
@@ -44,7 +48,9 @@ export default function SignupPage() {
         body: JSON.stringify(formData),
       });
 
+      console.log('[Signup] Response status:', res.status);
       const data = await res.json();
+      console.log('[Signup] Response body:', data);
 
       if (!res.ok) {
         throw new Error(data.detail || data.error || 'Failed to create company account.');
@@ -56,6 +62,7 @@ export default function SignupPage() {
       // Redirect to main sales dashboard
       window.location.href = '/';
     } catch (err: any) {
+      console.error('[Signup] Error during registration:', err);
       setError(err.message || 'An error occurred during registration.');
     } finally {
       setLoading(false);
@@ -82,7 +89,7 @@ export default function SignupPage() {
         )}
 
         {/* Signup Form */}
-        <form onSubmit={onSubmit} method="POST" className="space-y-4">
+        <form onSubmit={onSubmit} action="#" noValidate className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
@@ -242,7 +249,8 @@ export default function SignupPage() {
           </div>
 
           <button
-            type="submit"
+            type="button"
+            onClick={onSubmit}
             disabled={loading}
             className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-semibold rounded-2xl transition-all shadow-md shadow-primary/20 mt-4 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >

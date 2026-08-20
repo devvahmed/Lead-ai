@@ -39,8 +39,11 @@ export default function LoginPage() {
     }
   };
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     // Synchronous guard — prevents double-submit if React re-render is delayed
     if (loading) return;
     if (!email || !password) {
@@ -70,7 +73,7 @@ export default function LoginPage() {
         )}
 
         {/* Login Form */}
-        <form onSubmit={onSubmit} method="POST" className="space-y-4">
+        <form onSubmit={onSubmit} action="#" noValidate className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
               Work Email Address
@@ -110,7 +113,8 @@ export default function LoginPage() {
           </div>
 
           <button
-            type="submit"
+            type="button"
+            onClick={onSubmit}
             disabled={loading}
             className="w-full py-3 bg-primary hover:bg-primary/90 text-white font-semibold rounded-2xl transition-all shadow-md shadow-primary/20 mt-2 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
