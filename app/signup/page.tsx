@@ -6,14 +6,14 @@ import { setAuthToken } from '@/lib/auth';
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    website: '',
-    industry: '',
-    services: '',
-    target_customers: '',
-    description: '',
+    name: 'WTechX',
+    email: 'admin@wtechx.com',
+    password: 'Password123!',
+    website: 'https://wtechx.com',
+    industry: 'AI Automation, Robotics Engineering, Computer Vision',
+    services: 'AI Lead Generation, AI Chatbots, Workflow Automation, SLAM, Autonomous Navigation & Computer Vision',
+    target_customers: 'B2B Tech Companies, Industrial & Manufacturing Firms, Commercial Enterprises needing Automation',
+    description: 'Engineering-driven company designing and deploying custom AI automation, computer vision, and robotics solutions to help businesses save time, reduce manual effort, and scale operations.',
     smtp_email: '',
     smtp_password: '',
   });
