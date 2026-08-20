@@ -69,16 +69,46 @@ export default function SignupPage() {
     }
   };
 
+  const autoFillDemo = () => {
+    setFormData({
+      name: 'WTechX AI Systems',
+      email: `admin_${Math.floor(Math.random() * 9000 + 1000)}@wtechx.com`,
+      password: 'Password123!',
+      website: 'https://wtechx.com',
+      industry: 'AI Automation, Computer Vision & Robotics',
+      services: 'AI Lead Generation, Enterprise CRM, Computer Vision',
+      target_customers: 'B2B Tech Startups, Manufacturing, Enterprises',
+      description: 'Engineering AI automation and computer vision solutions for businesses.',
+      smtp_email: '',
+      smtp_password: '',
+    });
+    setError(null);
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 py-12 bg-gradient-to-br from-surface-bright via-background to-surface-container-low">
       <div className="w-full max-w-xl bg-white border border-outline-variant/80 rounded-3xl shadow-xl p-8 backdrop-blur-md">
         {/* Brand Header */}
         <div className="flex flex-col items-center mb-6">
+          <span className="px-3 py-0.5 bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-full mb-3 flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Build v2.0 (Verified LAN)
+          </span>
           <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/25 mb-3">
             <span className="material-symbols-outlined text-[28px]">domain_add</span>
           </div>
           <h1 className="text-2xl font-bold text-on-surface tracking-tight">Create Company Account</h1>
           <p className="text-sm text-secondary mt-1 text-center">Configure your company profile to enable AI-powered lead discovery and outreach</p>
+          
+          {/* Quick Auto Fill Button */}
+          <button
+            type="button"
+            onClick={autoFillDemo}
+            className="mt-4 px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold rounded-xl border border-amber-200 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px] text-amber-600">bolt</span>
+            <span>⚡ 1-Click Auto Fill (WTechX Details)</span>
+          </button>
         </div>
 
         {error && (
