@@ -73,7 +73,7 @@ export default function LoginPage() {
         )}
 
         {/* Login Form */}
-        <form onSubmit={onSubmit} action="#" noValidate className="space-y-4">
+        <div onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
               Work Email Address
@@ -127,7 +127,7 @@ export default function LoginPage() {
               </>
             )}
           </button>
-        </form>
+        </div>
 
         {/* Sign Up Link */}
         <div className="mt-8 text-center border-t border-outline-variant/60 pt-4">

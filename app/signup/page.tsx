@@ -88,8 +88,8 @@ export default function SignupPage() {
           </div>
         )}
 
-        {/* Signup Form */}
-        <form onSubmit={onSubmit} action="#" noValidate className="space-y-4">
+        {/* Signup Form Container */}
+        <div onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-on-surface uppercase tracking-wider mb-1.5">
@@ -266,7 +266,7 @@ export default function SignupPage() {
               </>
             )}
           </button>
-        </form>
+        </div>
 
         {/* Sign In Link */}
         <div className="mt-6 text-center border-t border-outline-variant/60 pt-4">
