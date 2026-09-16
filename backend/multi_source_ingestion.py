@@ -279,9 +279,9 @@ async def fetch_searxng_async(
     Tries port 8085 and 8080 (or SEARXNG_URL env var).
     """
     candidates: List[RawLeadCandidate] = []
-    configured_url = os.getenv("SEARXNG_URL", "http://127.0.0.1:8085")
+    configured_url = os.getenv("SEARXNG_URL", "http://100.91.220.98:8085")
     urls_to_try = [configured_url]
-    for fallback_port in ("http://127.0.0.1:8085", "http://localhost:8085", "http://127.0.0.1:8080", "http://localhost:8080"):
+    for fallback_port in ("http://100.91.220.98:8085", "http://127.0.0.1:8085", "http://localhost:8085", "http://127.0.0.1:8080", "http://localhost:8080"):
         if fallback_port not in urls_to_try:
             urls_to_try.append(fallback_port)
 
@@ -297,7 +297,7 @@ async def fetch_searxng_async(
                 p_url = urllib.parse.urlparse(u_str)
                 h = p_url.hostname or "127.0.0.1"
                 p = p_url.port or 8085
-                with socket.create_connection((h, p), timeout=0.1):
+                with socket.create_connection((h, p), timeout=1.0):
                     return True
             except Exception:
                 return False
@@ -315,7 +315,7 @@ async def fetch_searxng_async(
                     "language": "en"
                 }
                 search_url = f"{base_url.rstrip('/')}/search"
-                resp = await client.get(search_url, params=params, timeout=2.0)
+                resp = await client.get(search_url, params=params, timeout=5.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     results = data.get("results", [])
