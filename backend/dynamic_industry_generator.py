@@ -218,32 +218,22 @@ def build_searxng_dorks(industry_niche: str, country: str = "") -> List[str]:
     tld = get_country_tld(clean_country)
 
     dorks: List[str] = []
+    loc = f" {clean_country}" if clean_country else ""
 
-    # Dork 1: Corporate Operations & Direct Contact
-    if clean_country:
-        dorks.append(f'"{clean_niche}" "{clean_country}" ("contact us" OR "about us" OR "our operations")')
-    else:
-        dorks.append(f'"{clean_niche}" ("contact us" OR "about us" OR "our operations")')
+    # Dork 1: Official Website & Contact Operations
+    dorks.append(f'{clean_niche} official website contact us{loc}'.strip())
 
-    # Dork 2: Hiring & Operational Scaling Pain Points
-    if clean_country:
-        dorks.append(f'"{clean_niche}" "{clean_country}" ("hiring" OR "careers" OR "manual process")')
-    else:
-        dorks.append(f'"{clean_niche}" ("hiring" OR "careers" OR "manual process")')
+    # Dork 2: Commercial Products & Services
+    dorks.append(f'{clean_niche} commercial providers products services{loc}'.strip())
 
-    # Dork 3: Equipment, Manufacturing & Specialized Services (TLD-scoped if country available)
+    # Dork 3: TLD-scoped or Leading Providers
     if tld and tld not in ("com", ""):
-        dorks.append(f'site:.{tld} "{clean_niche}" ("equipment" OR "manufacturing" OR "services")')
-    elif clean_country:
-        dorks.append(f'"{clean_niche}" "{clean_country}" ("equipment" OR "manufacturing" OR "services")')
+        dorks.append(f'{clean_niche} store brands site:.{tld}')
     else:
-        dorks.append(f'"{clean_niche}" ("equipment" OR "manufacturing" OR "services")')
+        dorks.append(f'leading {clean_niche} brands{loc}'.strip())
 
-    # Dork 4: Facilities, Plants & Regional Headquarters
-    if clean_country:
-        dorks.append(f'"{clean_niche}" "{clean_country}" ("facility" OR "plant" OR "headquarters")')
-    else:
-        dorks.append(f'"{clean_niche}" ("facility" OR "plant" OR "headquarters")')
+    # Dork 4: Business Operations & Customer Care
+    dorks.append(f'{clean_niche} business operations about us{loc}'.strip())
 
     return dorks
 
@@ -402,6 +392,32 @@ HEURISTIC_INDUSTRY_MATRIX: List[Dict[str, Any]] = [
         "target_service_fit": "Commercial rooftop feasibility tracking, automated permitting workflows, and asset monitoring portals",
         "rationale": "Massive influx of commercial energy transition projects creates high demand for modern operational tooling",
         "dork_keywords": ["commercial solar epc", "turnkey solar installer", "industrial solar systems provider"]
+    },
+
+    # ── Category 6: AI Chatbots & Conversational Support ───────────────────────
+    {
+        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "customer support ai", "virtual assistant"],
+        "niche": "Direct-to-Consumer E-Commerce Brands",
+        "parent_industry": "E-Commerce & Online Retail",
+        "target_service_fit": "24/7 automated customer support, cart abandonment recovery, order tracking, and personalized product recommendations",
+        "rationale": "High consumer ticket volume and cart abandonment create direct revenue upside for automated conversational bots",
+        "dork_keywords": ["clothing brands online store", "retail consumer brands store", "online shopping store"]
+    },
+    {
+        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "appointment"],
+        "niche": "Multi-Location Dental & Medical Clinics",
+        "parent_industry": "Healthcare Clinics",
+        "target_service_fit": "24/7 patient appointment scheduling, service pricing FAQs, and intake qualification bots",
+        "rationale": "Clinics lose after-hours patient bookings without instant conversational triage and appointment scheduling",
+        "dork_keywords": ["dental clinic book appointment", "medical practice patient care", "private clinic contact"]
+    },
+    {
+        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "real estate"],
+        "niche": "Residential Real Estate Brokerages",
+        "parent_industry": "Real Estate Agencies",
+        "target_service_fit": "Instant property inquiry handling, automated viewing bookings, and buyer budget pre-qualification",
+        "rationale": "Realtors need immediate response times on property listings to convert high-intent prospective buyers",
+        "dork_keywords": ["real estate agency properties for sale", "property management company", "luxury real estate brokers"]
     }
 ]
 

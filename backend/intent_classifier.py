@@ -67,9 +67,20 @@ CONTRACT_BUYER_PATTERNS = [
 ]
 
 COMMERCIAL_TARGET_PATTERNS = [
+    # Industrial & Manufacturing
     re.compile(r'(?i)\b(?:our\s+(?:facilities|manufacturing|operations|plant|warehouse|fleet|factory|production\s+lines?|cleanroom))\b'),
     re.compile(r'(?i)\b(?:we\s+manufacture|we\s+produce|industrial\s+solutions|iso\s+9001|turnkey\s+systems)\b'),
     re.compile(r'(?i)\b(?:request\s+a\s+quote|request\s+an\s+rfq|request\s+pricing|contact\s+our\s+sales\s+division)\b'),
+    # E-Commerce, Retail & Consumer Brands
+    re.compile(r'(?i)\b(?:shop\s+online|add\s+to\s+cart|view\s+cart|checkout|free\s+shipping|buy\s+online|official\s+store|new\s+arrivals|our\s+collection|track\s+order|order\s+online|order\s+today|product\s+catalog|in\s+stock|return\s+policy)\b'),
+    # Healthcare & Medical Practices
+    re.compile(r'(?i)\b(?:book\s+(?:an?\s+)?appointment|patient\s+care|our\s+clinic|dental\s+practice|medical\s+center|schedule\s+consultation|health\s+services|our\s+physicians|patient\s+portal)\b'),
+    # Real Estate & Housing
+    re.compile(r'(?i)\b(?:properties\s+for\s+sale|real\s+estate\s+agency|property\s+listings|schedule\s+a\s+viewing|apartments\s+for\s+rent|commercial\s+leasing|property\s+management)\b'),
+    # Hospitality, Dining & Travel
+    re.compile(r'(?i)\b(?:reserve\s+a\s+table|book\s+a\s+room|hotel\s+reservations|our\s+menu|dining\s+reservations|guest\s+accommodations)\b'),
+    # Education & Academies
+    re.compile(r'(?i)\b(?:admissions|apply\s+online|tuition\s+fees|academic\s+programs|enroll\s+now|course\s+catalog)\b')
 ]
 
 
@@ -118,11 +129,11 @@ def classify_intent_deterministic(
     if contract_hits:
         return True, "CONTRACT_BUYER", 0.85
 
-    # 4. Check for Commercial Operating Target Business (e.g. factories, logistics, healthcare)
+    # 4. Check for Commercial Operating Target Business (e.g. factories, retail stores, logistics, healthcare)
     # These are operating companies that can be pitched our services
     commercial_hits = [p.pattern for p in COMMERCIAL_TARGET_PATTERNS if p.search(corpus)]
-    if len(commercial_hits) >= 2:
-        return True, "COMMERCIAL_TARGET", 0.80
+    if len(commercial_hits) >= 1:
+        return True, "COMMERCIAL_TARGET", 0.85
 
     # 5. Inconclusive deterministic signals
     return None, "AMBIGUOUS", 0.50
@@ -268,10 +279,6 @@ async def run_intent_classifier(
     )
 
     if is_buyer is False:
-        # If this is web company discovery (not an intent forum post like Reddit/Upwork),
-        # an operating business offering services in the sector is a valid commercial entity
-        if not is_intent_source and intent_type == "SELLER_AGENCY":
-            return True, "COMMERCIAL_TARGET", f"[Tier 1 Deterministic] Operating business entity ({intent_type})"
         return False, intent_type, f"[Tier 1 Deterministic] Detected {intent_type.replace('_', ' ').title()}"
 
     if is_buyer is True and conf >= 0.80:
@@ -289,12 +296,6 @@ async def run_intent_classifier(
     is_valid = bool(contextual_res.get("is_valid_buyer", False))
     res_intent = contextual_res.get("intent_type", "CONTRACT_BUYER" if is_valid else "INFORMATIONAL")
     res_reason = contextual_res.get("reason", "Contextual evaluation")
-
-    # On web discovery, an operating company in the industry is a valid commercial target
-    if not is_intent_source and res_intent == "SELLER_AGENCY":
-        is_valid = True
-        res_intent = "COMMERCIAL_TARGET"
-        res_reason += " (Operating corporate business in target industry)"
 
     return is_valid, res_intent, f"[Tier 2 Contextual] {res_reason}"
 

@@ -58,9 +58,13 @@ GENERIC_PLATFORMS: Set[str] = {
     "imgix.net", "cloudfront.net", "wp.com", "gravatar.com",
     "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org",
     "merriam-webster.com", "thefreedictionary.com", "investopedia.com",
-    "quora.com", "openai.com", "chatgpt.com", "bestbuy.com",
-    "forbes.com", "britannica.com", "dictionary.com", "microsoft.com",
-    "google.com", "deepai.org", "perplexity.ai"
+    "vocabulary.com", "yourdictionary.com", "collinsdictionary.com",
+    "dictionary.com", "britannica.com", "quora.com", "openai.com", "chatgpt.com",
+    "bestbuy.com", "forbes.com", "microsoft.com", "google.com",
+    "deepai.org", "perplexity.ai", "poki.com", "crazygames.com", "y8.com",
+    "zhihu.com", "baidu.com", "stackoverflow.com", "imdb.com", "themoviedb.org",
+    "rottentomatoes.com", "kinorium.com", "aceshowbiz.com", "moviefone.com",
+    "maps.google.com"
 }
 
 IMAGE_EXTENSIONS: Set[str] = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico"}
@@ -267,7 +271,8 @@ def get_dynamic_subreddits(target_service: str, query: str = "") -> List[str]:
 async def fetch_searxng_async(
     query: str,
     page: int = 1,
-    client: Optional[httpx.AsyncClient] = None
+    client: Optional[httpx.AsyncClient] = None,
+    country: str = ""
 ) -> List[RawLeadCandidate]:
     """
     Queries local SearXNG JSON endpoint and normalizes web search results.
@@ -370,6 +375,17 @@ async def fetch_searxng_async(
                     "form": "QBLH",
                     "first": first
                 }
+                country_to_cc = {
+                    "pakistan": "PK", "united states": "US", "usa": "US", "us": "US",
+                    "united kingdom": "GB", "uk": "GB", "canada": "CA", "australia": "AU",
+                    "germany": "DE", "france": "FR", "united arab emirates": "AE", "uae": "AE",
+                    "saudi arabia": "SA", "india": "IN", "singapore": "SG", "ireland": "IE",
+                    "netherlands": "NL", "spain": "ES", "italy": "IT", "switzerland": "CH"
+                }
+                cc_code = country_to_cc.get(country.lower().strip()) if country else ""
+                if cc_code:
+                    b_params["cc"] = cc_code
+
                 b_resp = await client.get("https://www.bing.com/search", params=b_params, headers=bing_headers)
                 if b_resp.status_code == 200:
                     matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
@@ -1256,7 +1272,8 @@ async def ingest_all_sources(
     query: str,
     target_service: str = "",
     page: int = 1,
-    discovery_mode: str = "hybrid"
+    discovery_mode: str = "hybrid",
+    target_country: str = ""
 ) -> List[RawLeadCandidate]:
     """
     Main asynchronous entry point: runs source workers concurrently via asyncio.gather.
@@ -1299,7 +1316,7 @@ async def ingest_all_sources(
         tasks = []
         if norm_mode in ("companies", "company", "target_companies"):
             # 🏢 Pure Corporate Mode: Query ONLY SearXNG for genuine corporate websites
-            tasks.append(run_worker(fetch_searxng_async(query=query, page=page, client=client), "SearXNG"))
+            tasks.append(run_worker(fetch_searxng_async(query=query, page=page, client=client, country=target_country), "SearXNG"))
         elif norm_mode in ("direct_clients", "clients", "social_intent", "social", "intent", "gigs"):
             # 🎯 Pure Direct Client Mode: Query Reddit, Twitter, HackerNews, and Upwork/RSS for live client buying signals
             tasks.extend([
@@ -1311,7 +1328,7 @@ async def ingest_all_sources(
         else:
             # 'hybrid' (default) -> Ingest across all sources
             tasks.extend([
-                run_worker(fetch_searxng_async(query=query, page=page, client=client), "SearXNG"),
+                run_worker(fetch_searxng_async(query=query, page=page, client=client, country=target_country), "SearXNG"),
                 run_worker(fetch_reddit_async(query=query, target_service=target_service, client=client), "Reddit"),
                 run_worker(fetch_twitter_intent_async(query=query, target_service=target_service, client=client), "TwitterX"),
                 run_worker(fetch_hacker_news_async(query=query, target_service=target_service, client=client), "HackerNews"),

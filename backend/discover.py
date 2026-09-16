@@ -1252,24 +1252,142 @@ def generate_industry_search_queries(
     location_str: str = ""
 ) -> List[str]:
     """
-    Generates focused, realistic search engine queries to find REAL INDIVIDUAL COMPANIES
-    operating in the specified industry.
+    Generates focused, realistic, high-end search engine queries to find REAL OPERATING COMPANIES,
+    STORES, BRANDS, AND PROVIDERS operating in the specified industry.
 
     IMPORTANT: The service keyword (our_services) is deliberately NOT injected
-    here — we are searching for companies IN the industry, not for companies
-    that already advertise they need our specific service.
+    here — we are searching for the prospective BUYER companies in the target industry
+    (e.g., real e-commerce stores, clinics, brokerages) that NEED our service, NOT
+    vendors or agencies that build solutions for them.
     """
     clean_industry = industry.strip()
-    loc_suffix = f" in {location_str}" if location_str else ""
+    loc_clean = location_str.strip()
+    loc_suffix = f" {loc_clean}" if loc_clean else ""
 
-    prompt = f"""You are a senior B2B web search engineer. Generate 6 realistic, natural search engine queries to find REAL INDIVIDUAL BUSINESSES / AGENCIES / COMPANIES in this target industry: "{clean_industry}".
+    # Normalize industry naming
+    ind_lower = clean_industry.lower()
+
+    # Determine industry archetype
+    is_ecommerce = any(w in ind_lower for w in [
+        "ecommerce", "e-commerce", "e commerce", "retail", "shopping", "d2c", "fashion", "clothing",
+        "apparel", "shoes", "footwear", "cosmetics", "skincare", "consumer goods", "store", "brands"
+    ])
+    is_healthcare = any(w in ind_lower for w in [
+        "health", "medical", "dental", "dentist", "doctor", "hospital", "clinic", "pharma", "wellness", "care"
+    ])
+    is_real_estate = any(w in ind_lower for w in [
+        "real estate", "property", "realtor", "housing", "brokerage", "leasing", "developer"
+    ])
+    is_hospitality = any(w in ind_lower for w in [
+        "restaurant", "hotel", "cafe", "resort", "hospitality", "travel", "tourism", "dining", "catering"
+    ])
+    is_education = any(w in ind_lower for w in [
+        "education", "university", "college", "school", "academy", "edtech", "training institute"
+    ])
+    is_automotive = any(w in ind_lower for w in [
+        "automotive", "auto", "car dealership", "dealership", "vehicle", "mechanic"
+    ])
+    is_logistics = any(w in ind_lower for w in [
+        "logistic", "freight", "trucking", "shipping", "warehouse", "3pl", "supply chain", "cargo"
+    ])
+    is_legal_finance = any(w in ind_lower for w in [
+        "legal", "law firm", "attorney", "lawyer", "accounting", "cpa", "tax", "wealth management", "financial advisory"
+    ])
+    is_explicit_agency = any(w in ind_lower for w in [
+        "marketing agency", "creative agency", "digital agency", "ad agency", "seo agency", "pr agency"
+    ])
+
+    if is_ecommerce:
+        deterministic_queries = [
+            f"clothing brands online store{loc_suffix}",
+            f"fashion apparel brand shop online{loc_suffix}",
+            f"retail consumer brands online store{loc_suffix}",
+            f"popular online stores buy products{loc_suffix}",
+            f"shoes footwear brand online store{loc_suffix}",
+            f"beauty cosmetics brand online store{loc_suffix}",
+            f"home lifestyle goods online store{loc_suffix}",
+            f"ecommerce retail stores buy products{loc_suffix}"
+        ]
+    elif is_healthcare:
+        deterministic_queries = [
+            f"dental clinic book appointment{loc_suffix}",
+            f"medical practice doctors clinic{loc_suffix}",
+            f"healthcare clinic patient care{loc_suffix}",
+            f"specialty medical center contact us{loc_suffix}",
+            f"aesthetic wellness clinic treatments{loc_suffix}",
+            f"family health clinic our doctors{loc_suffix}",
+            f"diagnostic medical center services{loc_suffix}",
+            f"private hospital healthcare services{loc_suffix}"
+        ]
+    elif is_real_estate:
+        deterministic_queries = [
+            f"real estate agency properties for sale{loc_suffix}",
+            f"property management company residential{loc_suffix}",
+            f"luxury real estate brokers property listings{loc_suffix}",
+            f"housing development property developers{loc_suffix}",
+            f"commercial property agency office leasing{loc_suffix}",
+            f"real estate firm buy rent properties{loc_suffix}"
+        ]
+    elif is_hospitality:
+        deterministic_queries = [
+            f"boutique hotel resort reservations{loc_suffix}",
+            f"restaurant dining reserve table menu{loc_suffix}",
+            f"travel tour operators holiday packages{loc_suffix}",
+            f"luxury hotel accommodations contact{loc_suffix}",
+            f"catering event services company{loc_suffix}"
+        ]
+    elif is_education:
+        deterministic_queries = [
+            f"private university admissions apply online{loc_suffix}",
+            f"international school academics enrollment{loc_suffix}",
+            f"professional training institute academy{loc_suffix}",
+            f"career academy certification programs{loc_suffix}"
+        ]
+    elif is_automotive:
+        deterministic_queries = [
+            f"car dealership vehicle inventory sales{loc_suffix}",
+            f"automotive repair service center book{loc_suffix}",
+            f"auto parts accessories store shop{loc_suffix}",
+            f"commercial vehicle sales dealership{loc_suffix}"
+        ]
+    elif is_logistics:
+        deterministic_queries = [
+            f"freight forwarding logistics company quote{loc_suffix}",
+            f"warehousing 3pl logistics services{loc_suffix}",
+            f"cargo transport trucking company contact{loc_suffix}",
+            f"supply chain distribution provider{loc_suffix}"
+        ]
+    elif is_legal_finance:
+        deterministic_queries = [
+            f"law firm attorneys practice areas contact{loc_suffix}",
+            f"chartered accountants cpa tax advisory firm{loc_suffix}",
+            f"wealth management financial advisory firm{loc_suffix}",
+            f"corporate legal counsel attorneys office{loc_suffix}"
+        ]
+    elif is_explicit_agency:
+        deterministic_queries = [
+            f"digital marketing agency client case studies{loc_suffix}",
+            f"creative branding agency our work clients{loc_suffix}",
+            f"b2b marketing consultancy services{loc_suffix}"
+        ]
+    else:
+        deterministic_queries = [
+            f"{clean_industry} company official website contact{loc_suffix}",
+            f"{clean_industry} commercial business products{loc_suffix}",
+            f"leading {clean_industry} corporate providers{loc_suffix}",
+            f"top {clean_industry} brands operating in{loc_suffix}",
+            f"{clean_industry} commercial operations about us{loc_suffix}",
+            f"registered {clean_industry} business directory official{loc_suffix}"
+        ]
+
+    prompt = f"""You are a senior B2B web search engineer. Generate 6 realistic, natural search engine queries to find REAL OPERATING BUSINESSES / STORES / CLINICS / ENTITIES in this target industry: "{clean_industry}".
 
 CRITICAL GUIDELINES:
-1. Write natural search queries (3 to 6 words) that directly surface commercial corporate homepages.
-2. Do NOT stack multiple synonyms together (e.g. NEVER write 'development company agency solutions provider portfolio').
-3. Use realistic commercial footprints: 'agency services clients', 'company about us contact', 'solutions provider clients', 'consultancy case studies'.
+1. Target the actual BUYERS / OPERATING END-BUSINESSES in this industry (e.g. if target industry is E-Commerce, find real online shopping stores and brands selling goods, NOT web design agencies or software vendors that build ecommerce websites).
+2. NEVER include words like 'solutions provider', 'agency services', 'portfolio', 'case studies', 'development company' unless the target industry itself is explicitly an agency.
+3. Write natural search queries (3 to 6 words) that directly surface commercial corporate homepages, brand stores, and official websites.
 4. Do NOT use words like "directory", "rankings", "wikipedia", "definition", "best tools".
-5. Append '{location_str}' to each query if provided.
+5. Append '{loc_clean}' to each query if provided.
 
 Return ONLY a bulleted list of 6 queries, one per line. No preamble, no explanation.
 
@@ -1297,30 +1415,45 @@ Example for "Healthcare":
                 clean_l = re.sub(r'^[-*•\d.\s]+', '', line).strip()
                 if any(clean_l.lower().startswith(pw) for pw in preamble_words) or clean_l.endswith(":"):
                     continue
-                # Skip synonym-stuffed or listicle queries
-                if len(clean_l) > 5 and not any(w in clean_l.lower() for w in ("wikipedia", "directory", "definition")):
+                # Reject queries that inject developer/agency synonyms when searching for non-agency industries
+                clean_lower = clean_l.lower()
+                agency_dev_words = (
+                    "solutions provider", "agency services", "clients portfolio", "development company",
+                    "website developers", "web developers", "software developers", "developers", "developer",
+                    "development agency", "web development", "software company", "it services", "development",
+                    "dev company", "dev shop", "portfolio", "design company", "website design", "software solutions",
+                    "review", "reviews", "list", "top tools", "best tools", "ranking"
+                )
+                if not is_explicit_agency and any(bad in clean_lower for bad in agency_dev_words):
+                    continue
+                if len(clean_l) > 5 and not any(w in clean_lower for w in ("wikipedia", "directory", "definition")):
                     valid_queries.append(clean_l)
 
-            queries = valid_queries[:8]
-            if queries:
-                print(f"[Search Query Builder] Industry: '{clean_industry}' → {len(queries)} queries:")
+            # For specialized archetypes (e.g. E-Commerce, Healthcare, Real Estate), curated queries are guaranteed clean
+            if is_ecommerce or is_healthcare or is_real_estate or is_hospitality or is_education or is_automotive or is_logistics or is_legal_finance:
+                combined_queries = list(deterministic_queries)
+                for lq in valid_queries:
+                    if lq not in combined_queries:
+                        combined_queries.append(lq)
+                queries = combined_queries[:8]
+                print(f"[Search Query Builder] Industry: '{clean_industry}' (Curated Archetype) → {len(queries)} high-end queries:")
+                for idx, q in enumerate(queries, 1):
+                    print(f"   Query #{idx}: '{q}'")
+                return queries
+
+            if valid_queries:
+                queries = valid_queries[:8]
+                print(f"[Search Query Builder] Industry: '{clean_industry}' (Dynamic LLM) → {len(queries)} queries:")
                 for idx, q in enumerate(queries, 1):
                     print(f"   Query #{idx}: '{q}'")
                 return queries
     except Exception as e:
-        print(f"[Search Query Builder] Ollama offline — using fallback queries: {e}")
+        print(f"[Search Query Builder] Ollama offline — using archetype fallback queries: {e}")
 
-    # Deterministic natural queries targeting real operating commercial entities
-    return [
-        f"{clean_industry} agency services clients{loc_suffix}",
-        f"{clean_industry} companies about us contact{loc_suffix}",
-        f"best {clean_industry} agency solutions{loc_suffix}",
-        f"top {clean_industry} corporate providers{loc_suffix}",
-        f"{clean_industry} consultancy our team case studies{loc_suffix}",
-        f"hire {clean_industry} firm request quote{loc_suffix}",
-        f"{clean_industry} solutions provider our clients{loc_suffix}",
-        f"leading {clean_industry} boutique agency{loc_suffix}"
-    ]
+    print(f"[Search Query Builder] Industry: '{clean_industry}' → {len(deterministic_queries)} archetype queries:")
+    for idx, q in enumerate(deterministic_queries, 1):
+        print(f"   Query #{idx}: '{q}'")
+    return deterministic_queries
 
 
 # ─── Streaming Discovery Generator ───────────────────────────────────────────
@@ -1463,7 +1596,8 @@ async def stream_discovery(
                         query=active_query,
                         target_service=services_context,
                         page=query_subpage,
-                        discovery_mode=discovery_mode
+                        discovery_mode=discovery_mode,
+                        target_country=clean_country
                     )
                 except TypeError:
                     multi_candidates = await ingest_all_sources(
