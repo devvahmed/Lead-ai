@@ -194,7 +194,7 @@ Respond ONLY in valid JSON format. No markdown backticks:
                 system_prompt="You are a strict B2B buyer intent classifier. Output JSON only.",
                 temperature=0.1,
                 max_tokens=200,
-                timeout=7.0
+                timeout=12.0
             )
 
             if raw:

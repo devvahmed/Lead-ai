@@ -300,7 +300,7 @@ Respond ONLY with a valid JSON object. No preamble, no markdown codeblocks:
                 system_prompt="You are a B2B Commercial Entity Classifier. Respond with valid JSON only.",
                 temperature=0.1,
                 max_tokens=200,
-                timeout=7.0
+                timeout=12.0
             )
 
             if raw:

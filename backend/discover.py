@@ -1404,7 +1404,7 @@ Example for "Healthcare":
             system_prompt=system_prompt,
             temperature=0.2,
             max_tokens=150,
-            timeout=7.0
+            timeout=15.0
         )
         if raw_output and len(raw_output.strip()) > 10:
             raw_lines = [line.strip() for line in raw_output.splitlines() if line.strip()]

@@ -520,7 +520,7 @@ Respond ONLY in valid JSON. No markdown backticks:
                 system_prompt="You are a strict B2B corporate entity geo-location verifier. Respond in JSON only.",
                 temperature=0.1,
                 max_tokens=200,
-                timeout=7.0
+                timeout=12.0
             )
 
             if raw:
