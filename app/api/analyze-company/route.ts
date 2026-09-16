@@ -37,14 +37,22 @@ async function scrapeCompany(websiteUrl: string): Promise<string> {
   return `${homeText}\n\n${aboutText}`.trim().slice(0, 8000);
 }
 
-// ─── Ollama / Groq API call ─────────────────────────────────────────────────
+function getBackendUrl(): string {
+  const envUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl || envUrl.startsWith('/')) {
+    return 'http://localhost:8000';
+  }
+  return envUrl.replace(/\/$/, '');
+}
+
+// ─── LLM Proxy Call (Ollama → Groq/Gemini 50/50 fallback) ─────────────────────
 async function analyzeWithOllama(
   companyName: string,
   content: string,
   ourCompanyName: string,
   ourServices: string
 ): Promise<{ relevant: boolean; reason: string }> {
-  const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
+  const backendBase = getBackendUrl();
 
   const prompt = `Our company, ${ourCompanyName}, offers: ${ourServices}.
 
@@ -62,33 +70,33 @@ You MUST respond in this exact JSON format only (do NOT include markdown fences,
 {"relevant": boolean, "reason": "One short sentence explaining fit."}`;
 
   try {
-    const res = await fetch(`${ollamaUrl}/api/generate`, {
+    const res = await fetch(`${backendBase}/llm-proxy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3.2',
         prompt,
-        format: 'json',
-        stream: false,
+        temperature: 0.2,
+        max_tokens: 300,
+        domain_tag: 'analyze-company',
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(25000),
     });
 
     if (!res.ok) {
-      throw new Error(`Ollama returned status ${res.status}`);
+      throw new Error(`Backend LLM proxy returned status ${res.status}`);
     }
 
     const data = await res.json();
-    const text = data.response;
-    if (!text) throw new Error("Empty response from Ollama");
+    let text = (data.content || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+    if (!text) throw new Error("Empty response from LLM proxy");
 
-    const parsed = JSON.parse(text.trim());
+    const parsed = JSON.parse(text);
     return {
       relevant: Boolean(parsed.relevant),
       reason: String(parsed.reason || 'Analysis completed.'),
     };
   } catch (err) {
-    console.warn('Ollama analyze company unavailable — fallback response used:', err);
+    console.warn('Backend LLM proxy analyze company unavailable — fallback response used:', err);
     return {
       relevant: true,
       reason: `Company analysis completed for ${ourCompanyName}'s target profile.`,

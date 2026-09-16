@@ -1,0 +1,188 @@
+{
+  "last_updated": "2026-09-14T11:38:17.786457+00:00",
+  "total_scanned": 15,
+  "scanned_set": [
+    "agricultural produce grading packing",
+    "automated inspection of composite layup in aerospace component manufacturing",
+    "automated pcb inspection for lowvolume aerospace avionics",
+    "automotive assembly line visual qc",
+    "automotive paint shop quality control",
+    "automotive spare parts distributors",
+    "cold storage warehouses",
+    "commercial solar epc contractors",
+    "ecommerce fulfillment centers",
+    "fmcg defect detection sorting",
+    "food processing line monitoring",
+    "industrial equipment auctioneers",
+    "pharmaceutical packaging inspection",
+    "precision cnc machine shops",
+    "textile fabric quality control"
+  ],
+  "history": [
+    {
+      "niche": "Pharmaceutical Packaging Inspection",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T10:04:25.028900+00:00",
+      "metadata": {
+        "parent_industry": "Pharmaceutical Manufacturing",
+        "target_service_fit": "High-throughput optical blister pack, vial seal, and label alignment verification",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Automotive Paint Shop Quality Control",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T10:20:48.454310+00:00",
+      "metadata": {
+        "parent_industry": "Manufacturing",
+        "target_service_fit": "Detecting defects in paint finishes and coatings",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Textile Fabric Quality Control",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T11:14:05.243280+00:00",
+      "metadata": {
+        "parent_industry": "Textile Manufacturing",
+        "target_service_fit": "Automated visual defect detection on high-speed loom fabric to eliminate manual inspection scrap",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Food Processing Line Monitoring",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T11:15:54.470484+00:00",
+      "metadata": {
+        "parent_industry": "Food and Beverage Manufacturing",
+        "target_service_fit": "Real-time defect detection for improved product quality and reduced waste",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "FMCG Defect Detection & Sorting",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T11:26:20.965777+00:00",
+      "metadata": {
+        "parent_industry": "Food & Beverage Processing",
+        "target_service_fit": "Automated conveyor-belt defect grading, foreign body rejection, and container seal checking",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Agricultural Produce Grading & Packing",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T11:40:25.406491+00:00",
+      "metadata": {
+        "parent_industry": "Agri-Business & Post-Harvest",
+        "target_service_fit": "Automated multi-spectral optical sizing and defect grading for fruit, citrus, and vegetable packing houses",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Automotive Assembly Line Visual QC",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T12:06:00.393280+00:00",
+      "metadata": {
+        "parent_industry": "Automotive Tier 1 Suppliers",
+        "target_service_fit": "Weld bead integrity, gap-and-flush measurement, and paint surface flaw detection",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Precision CNC Machine Shops",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T13:03:02.884547+00:00",
+      "metadata": {
+        "parent_industry": "Industrial Precision Manufacturing",
+        "target_service_fit": "Automated production scheduling, vendor quotation portal, and scrap reduction analytics",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Commercial Solar EPC Contractors",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T13:08:29.310135+00:00",
+      "metadata": {
+        "parent_industry": "Renewable Energy & Power Engineering",
+        "target_service_fit": "Commercial rooftop feasibility tracking, automated permitting workflows, and asset monitoring portals",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Cold Storage Warehouses",
+      "service_context": "Computer Vision, Defect Detection",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-09T15:09:51.741637+00:00",
+      "metadata": {
+        "parent_industry": "Logistics & Temperature Controlled Storage",
+        "target_service_fit": "Automated temperature-proof pallet tracking, batch expiration monitoring, and picking optimization",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Automated Inspection of Composite Layup in Aerospace Component Manufacturing",
+      "service_context": "Robotics, AI, Robotics, and Computer Vision solutions provider",
+      "country": "Canada",
+      "scanned_at": "2026-09-10T22:47:53.321570+00:00",
+      "metadata": {
+        "parent_industry": "Aerospace & Defense",
+        "target_service_fit": "AI-driven computer vision detects delamination and fiber misalignment; robotic arms perform in‑line non‑contact inspection and corrective actions.",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Automotive Spare Parts Distributors",
+      "service_context": "Media & Entertainment – Content Personalization Engines, AI, Robotics, and Computer Vision solutions provider",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-10T22:52:35.779993+00:00",
+      "metadata": {
+        "parent_industry": "Wholesale Automotive Aftermarket",
+        "target_service_fit": "High-SKU dynamic bin location mapping, automated cross-referencing, and rapid pick-and-pack tracking",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Industrial Equipment Auctioneers",
+      "service_context": "Industrial Quality Inspection Services, AI, Robotics, and Computer Vision solutions provider",
+      "country": "United Arab Emirates",
+      "scanned_at": "2026-09-14T10:41:15.392352+00:00",
+      "metadata": {
+        "parent_industry": "Heavy Machinery & Capital Equipment",
+        "target_service_fit": "Global bidder acquisition funnels, heavy plant asset remarketing campaigns, and surplus inventory liquidation outreach",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "E-commerce Fulfillment Centers",
+      "service_context": "Neobanks (Digital‑only Banking Platforms), AI, Robotics, and Computer Vision solutions provider",
+      "country": "All Countries",
+      "scanned_at": "2026-09-14T10:56:31.708907+00:00",
+      "metadata": {
+        "parent_industry": "Third-Party Logistics (3PL)",
+        "target_service_fit": "Real-time multi-channel stock synchronization, automated wave picking, and automated return processing",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Automated PCB Inspection for Low-Volume Aerospace Avionics",
+      "service_context": "Higher Education Institutions with Online Programs, AI, Robotics, and Computer Vision solutions provider",
+      "country": "Canada",
+      "scanned_at": "2026-09-14T11:38:17.786164+00:00",
+      "metadata": {
+        "parent_industry": "Aerospace Manufacturing",
+        "target_service_fit": "Computer vision AI for defect detection and robotics for precision pick‑and‑place, reducing rework and scrap costs in low‑volume avionics PCB production.",
+        "mode": "target_companies"
+      }
+    }
+  ]
+}

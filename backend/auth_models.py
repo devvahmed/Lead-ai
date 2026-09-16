@@ -3,8 +3,10 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Database path (defaulting to wtechx_leads.db)
-DB_PATH = os.getenv("DATABASE_URL", "sqlite:///wtechx_leads.db")
+# Database path (anchored to absolute backend folder)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_FILE = os.path.join(_BASE_DIR, "wtechx_leads.db")
+DB_PATH = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_FILE}")
 
 engine = create_engine(
     DB_PATH,
@@ -50,6 +52,33 @@ def init_auth_db():
                 pass
     except Exception as e:
         print("[init_auth_db warning]:", e)
+
+    # Ensure default company profiles exist so authentication/demo accounts always resolve
+    try:
+        db = SessionLocal()
+        from auth_utils import hash_password
+
+        # Seed WTechX
+        wtechx = db.query(Company).filter(Company.name.ilike("wtechx")).first()
+        if not wtechx:
+            default_company = Company(
+                id=1,
+                name="WTechX",
+                email="admin@wtechx.com",
+                hashed_password=hash_password("admin123"),
+                website="https://wtechx.com",
+                industry="Robotics & AI Automation",
+                services="AI, Robotics, and Computer Vision solutions provider",
+                target_customers="Industrial and commercial enterprises seeking automation",
+                description="Provider of intelligent automated solutions and robotic automation pipelines."
+            )
+            db.add(default_company)
+            db.commit()
+            print("[init_auth_db] Seeded default company profile (ID=1: WTechX)")
+
+        db.close()
+    except Exception as e:
+        print("[init_auth_db seed warning]:", e)
 
 def get_auth_db():
     """Dependency for obtaining DB session."""

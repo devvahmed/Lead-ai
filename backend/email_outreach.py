@@ -689,6 +689,9 @@ async def scrape_pages_concurrent(base_url: str) -> str:
     print(f"[Layered Scraper] Completed in fast mode: {len(combined)} chars (found_email={found_email}) for {base_url}")
     return combined
 
+# ─── LLM import (tri-tier router: Ollama -> Groq/Gemini) ─────────────────────
+from llm_utils import call_llm as _llm_router_call
+
 # ─── Compact Ollama Snapshot ───────────────────────────────────────────────────
 def build_ollama_snapshot(emails: list, phones: list, email_meta: list, content: str) -> str:
     """
@@ -707,24 +710,12 @@ def build_ollama_snapshot(emails: list, phones: list, email_meta: list, content:
         f"CONTENT: {preview}"
     )
 
-# ─── Ollama Helpers ────────────────────────────────────────────────────────────
+# ─── Ollama Helpers (delegates to llm_utils tri-tier router) ─────────────────
 def call_ollama(prompt: str) -> str:
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    payload = {"model": "llama3.2", "prompt": prompt, "stream": False}
-    try:
-        req = urllib.request.Request(
-            f"{ollama_url}/api/generate",
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}, method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=3.0) as res:
-            text = json.loads(res.read().decode('utf-8')).get('response', '').strip()
-            if text:
-                return text
-    except Exception as e:
-        print(f"[Ollama] Error: {e}")
-
-    print("[Ollama] Fallback triggered.")
+    result = _llm_router_call(prompt=prompt, max_tokens=1000, timeout=15.0)
+    if result:
+        return result
+    print("[LLM Router] All providers failed. Using static fallback.", flush=True)
     if "email" in prompt.lower():
         return (
             f"Subject: Scalable Custom AI & Robotics Solutions for your business\n"
@@ -737,39 +728,52 @@ def call_ollama(prompt: str) -> str:
 
 
 def call_ollama_json(prompt: str) -> dict:
-    raw_base = os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_BASE_URL") or "http://100.91.220.98:11434"
-    base_url = raw_base.strip().rstrip("/")
-    if base_url.endswith("/v1"):
-        base_url = base_url[:-3]
+    raw = _llm_router_call(prompt=prompt, max_tokens=800, timeout=15.0)
+    if not raw:
+        return {}
+    try:
+        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+        return json.loads(raw.strip())
+    except Exception as e:
+        print(f"[LLM Router JSON] Parse failed: {e}")
+        return {}
 
-    endpoint = f"{base_url}/api/generate"
-    model_name = os.getenv("OLLAMA_MODEL", "llama3:latest")
-    payload = {"model": model_name, "prompt": prompt, "format": "json", "stream": False}
+# ─── /llm-proxy  (Next.js → Python LLM tri-tier router) ─────────────────────
+from llm_utils import call_llm
 
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                endpoint,
-                data=json.dumps(payload).encode('utf-8'),
-                headers={'Content-Type': 'application/json', 'User-Agent': 'ClientPlus-AI/1.0'},
-                method='POST'
-            )
-            with urllib.request.urlopen(req, timeout=3.5) as res:
-                if res.status == 200:
-                    text = json.loads(res.read().decode('utf-8')).get('response', '')
-                    if text:
-                        return json.loads(text.strip())
-        except Exception as e:
-            is_reset_err = any(err_kw in str(e).lower() for err_kw in ["10054", "reset", "timed out", "connection", "closed"])
-            if attempt < max_retries and is_reset_err:
-                import time
-                time.sleep(0.4)
-                continue
-            print(f"[Ollama JSON Error] Endpoint '{endpoint}' attempt {attempt}/{max_retries}: {e}")
-            break
+class LLMProxyRequest(BaseModel):
+    prompt: str
+    system_prompt: Optional[str] = None
+    temperature: float = 0.3
+    max_tokens: int = 1000
+    timeout: float = 20.0
+    domain_tag: str = ""
 
-    return {}
+@app.post("/llm-proxy")
+async def llm_proxy(req: LLMProxyRequest):
+    """
+    Universal LLM proxy used by all Next.js API routes.
+    Routes through llm_utils tri-tier router:
+      Tier 1: Local Ollama (1.5 s probe)
+      Tier 2: 50/50 Groq / Gemini load-balanced fallback
+    Replaces every direct Ollama fetch() call in /app/api/* routes.
+    """
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: call_llm(
+            prompt=req.prompt,
+            system_prompt=req.system_prompt,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            timeout=req.timeout,
+            domain_tag=req.domain_tag or "next-proxy",
+        )
+    )
+    if result is None:
+        raise HTTPException(status_code=503, detail="All LLM providers unavailable. Please try again shortly.")
+    return {"content": result}
 
 # ─── /enrich-contacts ─────────────────────────────────────────────────────────
 @app.post("/enrich-contacts")

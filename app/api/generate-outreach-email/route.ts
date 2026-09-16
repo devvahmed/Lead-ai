@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedCompany } from '../auth-helper';
 
+function getBackendUrl(): string {
+  const envUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl || envUrl.startsWith('/')) {
+    return 'http://localhost:8000';
+  }
+  return envUrl.replace(/\/$/, '');
+}
+
 export async function POST(req: NextRequest) {
   let isFollowup = false;
   let company_name = 'the target company';
@@ -28,11 +36,6 @@ export async function POST(req: NextRequest) {
     matched_service = body.matched_service || body.matchedService || ourServices;
     match_reason = body.match_reason || body.matchReason || `optimizing operations for ${company_name}`;
     isFollowup = Boolean(body.is_followup || body.isFollowup);
-
-    const rawBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://100.91.220.98:11434/v1';
-    const baseUrl = rawBaseUrl.trim().replace(/\/$/, '');
-    const ollamaEndpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-    const model = process.env.OLLAMA_MODEL || 'llama3:latest';
 
     const systemPrompt = isFollowup
       ? `Write a short, polite 2-3 sentence cold follow-up nudge email to ${company_name}, a company in the ${industry} industry (${country}). 
@@ -74,26 +77,24 @@ Return ONLY pure JSON matching this exact structure:
   "body": "full email body text ready to send"
 }`;
 
-    console.log(`[Ollama Email Gen] Generating ${isFollowup ? 'follow-up' : 'initial'} email for ${company_name} on behalf of ${ourCompanyName}...`);
+    const backendBase = getBackendUrl();
+    console.log(`[LLM Email Gen] Generating ${isFollowup ? 'follow-up' : 'initial'} email for ${company_name} via backend LLM proxy...`);
 
-    const groqRes = await fetch(ollamaEndpoint, {
+    const proxyRes = await fetch(`${backendBase}/llm-proxy`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: model,
-        messages: [{ role: 'user', content: systemPrompt }],
+        prompt: systemPrompt,
         temperature: 0.3,
         max_tokens: 500,
-        response_format: { type: 'json_object' },
+        domain_tag: 'email-gen',
       }),
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(30000),
     });
 
-    if (!groqRes.ok) {
-      const errText = await groqRes.text().catch(() => '');
-      console.warn(`[Groq Email Gen] HTTP ${groqRes.status}: ${errText}`);
+    if (!proxyRes.ok) {
+      const errText = await proxyRes.text().catch(() => '');
+      console.warn(`[LLM Email Gen] Backend proxy HTTP ${proxyRes.status}: ${errText}`);
       return NextResponse.json({
         subject: isFollowup ? `Following up: ${matched_service} for ${company_name}` : `${matched_service} for ${company_name}`,
         body: isFollowup
@@ -102,8 +103,8 @@ Return ONLY pure JSON matching this exact structure:
       });
     }
 
-    const data = await groqRes.json();
-    const rawContent = data.choices?.[0]?.message?.content?.trim() || '{}';
+    const data = await proxyRes.json();
+    let rawContent = (data.content || '').replace(/```json/gi, '').replace(/```/g, '').trim();
     let parsed: { subject?: string; body?: string } = {};
     try {
       parsed = JSON.parse(rawContent);

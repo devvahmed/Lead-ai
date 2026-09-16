@@ -46,6 +46,11 @@ export interface Company {
   redFlags?: string;
   /** Two-way lead classification from backend: 'needs_service' | 'has_similar_service' */
   leadType?: 'needs_service' | 'has_similar_service';
+  /** Direct client intent lead fields */
+  isClientLead?: boolean;
+  clientName?: string;
+  platform?: string;
+  directPostUrl?: string;
 }
 
 interface AnalysisResult {
@@ -313,34 +318,61 @@ function CompanyCard({
       {/* Header: logo + name + badge */}
       <div className="flex justify-between items-start">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <CompanyLogo
-            logoUrl={company.logoUrl || `https://logo.clearbit.com/${company.domain || 'example.com'}`}
-            domain={company.domain || company.displayUrl || 'unknown'}
-            initials={company.initials || (company.name || 'Co').slice(0, 2).toUpperCase()}
-            colorClass={logoColor(index)}
-            size={48}
-          />
+          {company.isClientLead ? (
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-[18px] text-white shrink-0 shadow-sm ${
+              company.platform?.includes('Reddit') ? 'bg-orange-500' :
+              company.platform?.includes('Twitter') ? 'bg-black' :
+              company.platform?.includes('Hacker') ? 'bg-amber-600' :
+              company.platform?.includes('Upwork') ? 'bg-emerald-600' : 'bg-primary'
+            }`}>
+              <span className="material-symbols-outlined text-[24px]">
+                {company.platform?.includes('Reddit') ? 'forum' :
+                 company.platform?.includes('Twitter') ? 'tag' :
+                 company.platform?.includes('Upwork') ? 'work' : 'person'}
+              </span>
+            </div>
+          ) : (
+            <CompanyLogo
+              logoUrl={company.logoUrl || `https://logo.clearbit.com/${company.domain || 'example.com'}`}
+              domain={company.domain || company.displayUrl || 'unknown'}
+              initials={company.initials || (company.name || 'Co').slice(0, 2).toUpperCase()}
+              colorClass={logoColor(index)}
+              size={48}
+            />
+          )}
           <div className="min-w-0 flex-1">
             <h3 className="text-[15px] font-semibold text-on-surface truncate">
-              {company.name || company.domain || 'Unknown Company'}
+              {company.clientName || company.name || company.domain || 'Direct Prospect'}
             </h3>
-            <p className="text-[12px] text-secondary truncate">
-              {company.industry || 'Industry'} · {company.country || 'Global'}
+            <p className="text-[12px] text-secondary truncate flex items-center gap-1.5 mt-0.5">
+              {company.isClientLead && (
+                <span className="px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface font-medium text-[11px]">
+                  {company.platform || 'Online Client'}
+                </span>
+              )}
+              <span>{company.industry || 'B2B Need'}</span>
             </p>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
-          <span className={`px-2 py-1 rounded-lg text-[11px] font-semibold ${fitBadgeColor[company.trustStatus] ?? fitBadgeColor['Neutral']}`}>
-            {(company as any).matchConfidence !== undefined ? `${(company as any).matchConfidence}% Match` : (company.trustStatus || 'High Fit')}
-          </span>
+          {company.isClientLead ? (
+            <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-green-100 text-green-800 border border-green-300/80 flex items-center gap-1 shadow-xs">
+              <span className="material-symbols-outlined text-[12px] text-green-700">bolt</span>
+              Active Buyer Lead
+            </span>
+          ) : (
+            <span className={`px-2 py-1 rounded-lg text-[11px] font-semibold ${fitBadgeColor[company.trustStatus] ?? fitBadgeColor['Neutral']}`}>
+              {(company as any).matchConfidence !== undefined ? `${(company as any).matchConfidence}% Match` : (company.trustStatus || 'High Fit')}
+            </span>
+          )}
           {/* ── Lead Type Badge ──────────────────────────────────────────── */}
-          {(company as any).leadType === 'needs_service' && (
+          {!company.isClientLead && (company as any).leadType === 'needs_service' && (
             <span className="px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-green-50 text-green-800 border border-green-200/80 flex items-center gap-1" title="This company shows no evidence of already using your service type — prime prospect">
               <span className="material-symbols-outlined text-[11px] text-green-600">star</span>
               Potential New Client
             </span>
           )}
-          {(company as any).leadType === 'has_similar_service' && (
+          {!company.isClientLead && (company as any).leadType === 'has_similar_service' && (
             <span className="px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80 flex items-center gap-1" title="Company already uses a similar service — pitch as an upsell or replacement">
               <span className="material-symbols-outlined text-[11px] text-amber-600">trending_up</span>
               Upsell Opportunity
@@ -376,55 +408,85 @@ function CompanyCard({
 
       {/* Contact details & Priority Display */}
       <div className="flex flex-col gap-1.5 bg-surface-container-low rounded-xl px-3 py-2.5 border border-outline-variant/40">
-        {company.email ? (
-          /* Primary: EMAIL */
-          <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
-            <span className="material-symbols-outlined text-[14px] text-primary flex-shrink-0">email</span>
-            <a href={`mailto:${company.email.split(',')[0].trim()}`} className="font-medium text-primary hover:underline truncate">
-              {company.email.split(',')[0].trim()}
-            </a>
-          </div>
-        ) : company.phone ? (
-          /* Primary: PHONE */
-          <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
-            <span className="material-symbols-outlined text-[14px] text-emerald-600 flex-shrink-0">call</span>
-            <a href={`tel:${company.phone}`} className="font-medium text-emerald-700 hover:underline truncate">
-              {company.phone}
-            </a>
-          </div>
-        ) : company.linkedin ? (
-          /* Primary: LINKEDIN (only when no email & no phone) */
-          <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
-            <span className="material-symbols-outlined text-[14px] text-blue-600 flex-shrink-0">link</span>
-            <a href={company.linkedin} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate font-medium">
-              {company.linkedin.replace(/^https?:\/\/(www\.)?/, '')}
-            </a>
-          </div>
-        ) : company.enriching ? (
-          <div className="flex items-center gap-1.5 text-[11px] text-secondary italic">
-            <span className="material-symbols-outlined text-[13px] text-amber-500 animate-spin flex-shrink-0">sync</span>
-            <span>Scanning contacts (up to 30s)...</span>
+        {company.isClientLead ? (
+          <div className="flex flex-col gap-1 text-[12px]">
+            <div className="flex items-center justify-between">
+              <span className="text-secondary font-medium flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px] text-primary">chat</span>
+                Channel:
+              </span>
+              <span className="font-semibold text-on-surface">{company.platform || 'Online Community'}</span>
+            </div>
+            {company.directPostUrl && (
+              <div className="pt-1 mt-0.5 border-t border-outline-variant/30 flex items-center justify-between">
+                <span className="text-secondary font-medium flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px] text-emerald-600">open_in_new</span>
+                  Direct Post:
+                </span>
+                <a
+                  href={company.directPostUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold text-primary hover:underline"
+                >
+                  View Post & Reply →
+                </a>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
-            <span className="material-symbols-outlined text-[13px] text-gray-400 flex-shrink-0">subtitles_off</span>
-            <span>No direct contact info found</span>
-          </div>
-        )}
+          <>
+            {company.email ? (
+              /* Primary: EMAIL */
+              <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
+                <span className="material-symbols-outlined text-[14px] text-primary flex-shrink-0">email</span>
+                <a href={`mailto:${company.email.split(',')[0].trim()}`} className="font-medium text-primary hover:underline truncate">
+                  {company.email.split(',')[0].trim()}
+                </a>
+              </div>
+            ) : company.phone ? (
+              /* Primary: PHONE */
+              <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
+                <span className="material-symbols-outlined text-[14px] text-emerald-600 flex-shrink-0">call</span>
+                <a href={`tel:${company.phone}`} className="font-medium text-emerald-700 hover:underline truncate">
+                  {company.phone}
+                </a>
+              </div>
+            ) : company.linkedin ? (
+              /* Primary: LINKEDIN (only when no email & no phone) */
+              <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
+                <span className="material-symbols-outlined text-[14px] text-blue-600 flex-shrink-0">link</span>
+                <a href={company.linkedin} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate font-medium">
+                  {company.linkedin.replace(/^https?:\/\/(www\.)?/, '')}
+                </a>
+              </div>
+            ) : company.enriching ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-secondary italic">
+                <span className="material-symbols-outlined text-[13px] text-amber-500 animate-spin flex-shrink-0">sync</span>
+                <span>Scanning contacts (up to 30s)...</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                <span className="material-symbols-outlined text-[13px] text-gray-400 flex-shrink-0">subtitles_off</span>
+                <span>No direct contact info found</span>
+              </div>
+            )}
 
-        {/* Website link — minimal, clean */}
-        {company.website && (
-          <div className="pt-1 mt-0.5 border-t border-outline-variant/30 flex items-center gap-1 text-[11px] text-secondary">
-            <span className="material-symbols-outlined text-[12px] text-gray-400">language</span>
-            <a
-              href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-secondary hover:text-primary hover:underline truncate"
-            >
-              {company.domain || company.displayUrl}
-            </a>
-          </div>
+            {/* Website link — minimal, clean */}
+            {company.website && (
+              <div className="pt-1 mt-0.5 border-t border-outline-variant/30 flex items-center gap-1 text-[11px] text-secondary">
+                <span className="material-symbols-outlined text-[12px] text-gray-400">language</span>
+                <a
+                  href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-secondary hover:text-primary hover:underline truncate"
+                >
+                  {company.domain || company.displayUrl}
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -547,10 +609,11 @@ function exportCompaniesToCSV(companies: Company[], keyword: string) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DiscoverPage() {
+  const [discoveryMode, setDiscoveryMode] = useState<'companies' | 'direct_clients'>('companies');
   const [keyword, setKeyword] = useState('');
   const [country, setCountry] = useState('All Countries');
   const [city, setCity] = useState('');
-  const [minTrust, setMinTrust] = useState(75);  // default raised to match backend
+  const [minTrust, setMinTrust] = useState(60);  // 60% standard qualification threshold
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorFix, setErrorFix] = useState<string | null>(null);
@@ -845,6 +908,10 @@ export default function DiscoverPage() {
     }
 
     try {
+      const savedCompany = getSavedCompany();
+      const currentServices = suggestInput.trim() || savedCompany?.services || '';
+      const currentCompanyName = savedCompany?.name || companyName || '';
+
       const payload = {
         keyword: keyword.trim(),
         country,
@@ -852,6 +919,10 @@ export default function DiscoverPage() {
         minTrustScore: minTrust,
         pageno: nextPage,
         target_count: 10,
+        our_company: currentCompanyName || undefined,
+        our_services: currentServices || undefined,
+        mode: keyword.trim() ? 'direct_search' : 'target_companies',
+        discovery_mode: discoveryMode,
         ...(forceReset ? { clearCache: true, resetCursor: true } : {}),
       };
 
@@ -868,7 +939,8 @@ export default function DiscoverPage() {
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         if (errData.fix) setErrorFix(errData.fix);
-        throw new Error(errData.error || `Search failed (HTTP ${res.status})`);
+        const errMsg = errData.error || errData.detail || errData.message || `Search failed (HTTP ${res.status})`;
+        throw new Error(errMsg);
       }
 
       const contentType = res.headers.get('content-type') || '';
@@ -1249,16 +1321,48 @@ export default function DiscoverPage() {
         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, type: 'spring', stiffness: 300, damping: 30 }}
       >
+        {/* Mode Selector Tabs */}
+        <div className="flex items-center gap-3 mb-5 border-b border-outline-variant/60 pb-3">
+          <button
+            type="button"
+            onClick={() => { setDiscoveryMode('companies'); setCompanies([]); setHasSearched(false); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[14px] font-semibold transition-all ${
+              discoveryMode === 'companies'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-surface-container-low text-secondary hover:text-on-surface hover:bg-surface-variant'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">corporate_fare</span>
+            <span>Target Companies</span>
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.5 rounded ml-1 font-normal">SearXNG Verified</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setDiscoveryMode('direct_clients'); setCompanies([]); setHasSearched(false); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[14px] font-semibold transition-all ${
+              discoveryMode === 'direct_clients'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'bg-surface-container-low text-secondary hover:text-on-surface hover:bg-surface-variant'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">person_search</span>
+            <span>Direct Client Leads</span>
+            <span className="text-[10px] bg-emerald-700 text-white px-1.5 py-0.5 rounded ml-1 font-normal">Reddit · Twitter · Upwork</span>
+          </button>
+        </div>
+
         <div className="flex flex-col md:flex-row gap-4 items-end">
-          {/* Keyword */}
+          {/* Keyword / Service Input */}
           <div className="flex-1">
-            <label className="block text-[11px] font-semibold uppercase tracking-wider text-secondary mb-2">Industry / Keyword</label>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-secondary mb-2">
+              {discoveryMode === 'companies' ? 'Target Industry / Corporate Niche' : 'Your Service / Skill (e.g. AI Chatbot, Mobile App, SEO)'}
+            </label>
             <input
               type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder={keywordPlaceholder}
+              placeholder={discoveryMode === 'companies' ? keywordPlaceholder : 'e.g. AI Chatbot, Automated Outreach, Cloud Infrastructure...'}
               className="w-full h-10 px-3 py-2 bg-surface border border-outline-variant rounded-xl text-[14px] text-on-surface focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
             />
-
           </div>
           {/* Country & Optional Region/City Dropdown */}
           <CountryCitySelector
@@ -1283,12 +1387,14 @@ export default function DiscoverPage() {
             <motion.button
               whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
               onClick={() => handleSearch(false)} disabled={loading}
-              className="bg-primary text-white font-semibold text-[15px] px-6 py-2 h-10 rounded-xl hover:bg-primary-container transition-colors shadow-card flex items-center gap-2 whitespace-nowrap disabled:opacity-70"
+              className={`${
+                discoveryMode === 'direct_clients' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-container'
+              } text-white font-semibold text-[15px] px-6 py-2 h-10 rounded-xl transition-colors shadow-card flex items-center gap-2 whitespace-nowrap disabled:opacity-70 cursor-pointer`}
             >
               <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>
-                {loading ? 'progress_activity' : 'search'}
+                {loading ? 'progress_activity' : (discoveryMode === 'direct_clients' ? 'person_search' : 'search')}
               </span>
-              {loading ? 'Searching...' : 'Search Companies'}
+              {loading ? 'Searching...' : (discoveryMode === 'direct_clients' ? 'Find Direct Clients' : 'Search Companies')}
             </motion.button>
             <motion.button
               whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}

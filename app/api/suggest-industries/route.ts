@@ -67,11 +67,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rawBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://100.91.220.98:11434/v1';
-    const baseUrl = rawBaseUrl.trim().replace(/\/$/, '');
-    const ollamaEndpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-    const model = process.env.OLLAMA_MODEL || 'llama3:latest';
-
     const prompt = `You are a B2B market intelligence expert. A vendor offers this specific technology or service:
 
 SERVICE: "${service}"
@@ -88,37 +83,34 @@ RULES (follow strictly):
 Return ONLY valid JSON with this exact structure (no markdown):
 {"suggestions": [{"industry": "specific industry name", "reason": "One specific sentence explaining the direct operational need THIS service fills for companies in THIS industry."}]}`;
 
-    const response = await fetch(ollamaEndpoint, {
+    const systemPrompt = 'You are a precise B2B market analyst. You only return valid JSON. You never use generic industry names when specific ones are more accurate. Your reasons are always unique to the specific service and industry combination.';
+
+    // ── Route through Python backend LLM proxy (Ollama → Groq/Gemini fallback) ──
+    const backendBase = getBackendUrl();
+    const proxyRes = await fetch(`${backendBase}/llm-proxy`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a precise B2B market analyst. You only return valid JSON. You never use generic industry names when specific ones are more accurate. Your reasons are always unique to the specific service and industry combination.'
-          },
-          { role: 'user', content: prompt }
-        ],
+        prompt,
+        system_prompt: systemPrompt,
         temperature: 0.55,
         max_tokens: 1000,
-        response_format: { type: 'json_object' },
+        domain_tag: 'suggest-industries',
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.error(`[Suggest Industries] Groq API error HTTP ${response.status}: ${errText}`);
+    if (!proxyRes.ok) {
+      const errText = await proxyRes.text().catch(() => '');
+      console.error(`[Suggest Industries] LLM proxy error HTTP ${proxyRes.status}: ${errText}`);
       return NextResponse.json(
-        { error: `Groq API error (${response.status}): ${errText || 'Failed to generate suggestions'}` },
-        { status: response.status }
+        { error: `LLM error (${proxyRes.status}): ${errText || 'Failed to generate suggestions'}` },
+        { status: proxyRes.status }
       );
     }
 
-    const data = await response.json();
-    let rawContent = data.choices?.[0]?.message?.content || '';
+    const proxyData = await proxyRes.json();
+    let rawContent: string = proxyData.content || '';
     rawContent = rawContent.replace(/```json/gi, '').replace(/```/g, '').trim();
 
     let suggestions: Array<{ industry: string; reason: string }> = [];

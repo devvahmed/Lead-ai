@@ -34,9 +34,13 @@ async function proxyToBackend(body: object, authHeader?: string | null): Promise
   });
 
   if (!resp.ok) {
-    let errorData = { error: 'Discovery backend failed.' };
+    let errorData: any = { error: 'Discovery backend failed.' };
     try {
-      errorData = await resp.json();
+      const parsed = await resp.json();
+      errorData = {
+        error: parsed.error || parsed.detail || parsed.message || 'Discovery backend failed.',
+        ...parsed,
+      };
     } catch {
       /* fallback */
     }
@@ -169,6 +173,8 @@ export async function POST(req: NextRequest) {
       reset_cursor: Boolean(body.resetCursor || body.clearCache || body.reset_cursor),
       our_company: body.our_company,
       our_services: body.our_services,
+      mode: body.mode,
+      discovery_mode: body.discovery_mode,
     }, authHeader);
   } catch (err) {
     console.error('[POST Proxy] Fatal:', err);

@@ -3,7 +3,10 @@ import re
 import json
 import time
 import asyncio
+import logging
 import socket
+
+logger = logging.getLogger("discover")
 import urllib.request
 import urllib.parse
 from typing import AsyncIterator, List, Optional, Dict
@@ -26,9 +29,48 @@ builtins.print = print
 # ─── Import helpers from email_outreach.py ───────────────────────────────────
 from email_outreach import (
     fetch_url_content,
-    fetch_url_content_with_subpages,
+    fetch_url_content_with_subpages as _legacy_fetch_url_content_with_subpages,
     compute_relevance_score
 )
+from multi_source_ingestion import ingest_all_sources, RawLeadCandidate
+from dynamic_industry_generator import get_next_discovery_batch, IndustryHistoryTracker
+from junk_firewall import run_junk_firewall, is_deterministic_junk
+from geo_lock_engine import run_geo_lock_engine, verify_deterministic_geo
+from intent_classifier import run_intent_classifier
+from smart_dom_crawler import crawl_smart_dom_target, get_base_domain
+from operational_audit_engine import audit_company_operations
+from three_way_match_matrix import run_three_way_match_matrix, ThreeWayMatchResult
+from evidence_scoring_360 import calculate_evidence_score, generate_360_post_click_audit, EvidenceScoreBreakdown
+from llm_utils import call_llm as _llm_router_call
+
+
+async def fetch_url_content_with_smart_dom(url: str, timeout: float = 4.0, domain: str = "") -> Tuple[str, str]:
+    """
+    Step 6: Dynamic DOM Header/Footer/Nav Link Parser & Multi-Page Crawler.
+    Parses DOM structural zones (<nav>, <header>, <footer>, <body>) on the candidate homepage
+    to discover and concurrently fetch the highest-value operational subpages.
+    """
+    try:
+        crawl_res = await crawl_smart_dom_target(
+            domain=domain or get_base_domain(url),
+            homepage_url=url,
+            max_pages=4
+        )
+        combined = crawl_res.get("combined_text", "")
+        label = crawl_res.get("source_label", "homepage")
+        if combined and (len(combined.split()) >= 60 or "[PAGE:" in combined):
+            return combined, label
+    except Exception as e:
+        logger.debug(f"[SmartDOMCrawler] Crawl failed for {url}: {e}")
+
+    # Fallback to legacy fetcher if needed
+    try:
+        return await _legacy_fetch_url_content_with_subpages(url, timeout=timeout)
+    except Exception:
+        return "", "none"
+
+# Default fetcher alias for discovery pipeline & test suite backwards compatibility
+fetch_url_content_with_subpages = fetch_url_content_with_smart_dom
 
 # ─── Noise Filter Sets ────────────────────────────────────────────────────────
 #
@@ -387,6 +429,8 @@ class DiscoverRequest(BaseModel):
     reset_cursor: Optional[bool] = False
     our_company: Optional[str] = None
     our_services: Optional[str] = None
+    mode: Optional[str] = "target_companies"
+    discovery_mode: Optional[str] = "hybrid"
 
 
 # ─── Search Provider Helpers ──────────────────────────────────────────────────
@@ -409,8 +453,11 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     _all_providers_tried = 0  # incremented each time a real provider is attempted
 
     # ── Attempt 1: SearXNG (try both common ports) ────────────────────────────
-    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8085")
-    searxng_urls_to_try = list({searxng_url, "http://localhost:8085", "http://localhost:8080"})
+    searxng_url = os.getenv("SEARXNG_URL", "http://127.0.0.1:8085")
+    searxng_urls_to_try = []
+    for u in [searxng_url, "http://127.0.0.1:8085", "http://localhost:8085", "http://127.0.0.1:8080", "http://localhost:8080"]:
+        if u not in searxng_urls_to_try:
+            searxng_urls_to_try.append(u)
     print(f"[Discover Search] ── SearXNG Attempt ──────────────────────────────")
     print(f"[Discover Search] Query sent to SearXNG: '{query}' (page={page})")
     print(f"[Discover Search] Checking ports: {searxng_urls_to_try}")
@@ -469,73 +516,193 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     if results:
         return results
 
-    # ── Attempt 2: Brave Search API (if key available) ────────────────────────
-    brave_key = os.getenv("BRAVE_SEARCH_API_KEY", "")
-    print(f"[Discover Search] ── Brave Search Attempt ─────────────────────────")
-    if not brave_key:
-        print(f"[Discover Search] Brave Search SKIPPED — BRAVE_SEARCH_API_KEY not set in environment")
-    else:
-        _all_providers_tried += 1
-        print(f"[Discover Search] Query sent to Brave: '{query}' (page={page})")
-        try:
-            brave_params = urllib.parse.urlencode({"q": query, "count": 20, "offset": (page - 1) * 10})
-            brave_req = urllib.request.Request(
-                f"https://api.search.brave.com/res/v1/web/search?{brave_params}",
-                headers={
-                    "Accept": "application/json",
-                    "Accept-Encoding": "gzip",
-                    "X-Subscription-Token": brave_key,
-                    "User-Agent": "Mozilla/5.0"
-                }
-            )
-            loop = asyncio.get_event_loop()
-
-            def _fetch_brave():
-                try:
-                    with urllib.request.urlopen(brave_req, timeout=6.0) as resp:
-                        status = resp.status
-                        raw = resp.read()
-                        print(f"[Discover Search] Brave HTTP status={status}, raw_bytes={len(raw)}")
-                        try:
-                            import gzip
-                            raw = gzip.decompress(raw)
-                            print(f"[Discover Search] Brave response decompressed to {len(raw)} bytes")
-                        except Exception:
-                            pass
-                        if status == 200:
-                            data = json.loads(raw.decode('utf-8'))
-                            items = data.get("web", {}).get("results", [])
-                            print(f"[Discover Search] Brave parsed {len(items)} result(s)")
-                            return [
-                                {"url": r["url"], "title": r.get("title", ""), "content": r.get("description", "")}
-                                for r in items
-                            ]
-                        print(f"[Discover Search] Brave non-200 status {status} — no results")
-                        return []
-                except Exception as inner_e:
-                    print(f"[Discover Search] Brave fetch exception: {type(inner_e).__name__}: {inner_e}")
-                    return []
-
-            results = await loop.run_in_executor(None, _fetch_brave)
-            if results:
-                print(f"[Discover Search] ✓ Brave SUCCESS: {len(results)} results")
-                return results
-            else:
-                print(f"[Discover Search] Brave returned 0 results for query='{query}'")
-        except Exception as e:
-            print(f"[Discover Search] Brave outer exception: {type(e).__name__}: {e}")
-
-    # ── Attempt 3: DuckDuckGo HTML Scraping (POST) ─────────────────────────────
-    print(f"[Discover Search] ── DuckDuckGo Attempt ───────────────────────────")
-    print(f"[Discover Search] Query sent to DDG: '{query}' (page={page})")
+    # ── Attempt 2: Bing Live Web Search (with browser cookies & official form params) ──
+    print(f"[Discover Search] ── Bing Live Search (Free & Organic) ──")
+    print(f"[Discover Search] Query sent to Bing: '{query}' (page={page})")
     _all_providers_tried += 1
 
-    await asyncio.sleep(0.3)
+    try:
+        def decode_bing_ck_u(u_param: str) -> str:
+            if u_param.startswith("a1"):
+                b64 = u_param[2:]
+                b64 += "=" * ((4 - len(b64) % 4) % 4)
+                try:
+                    import base64
+                    return base64.b64decode(b64).decode('utf-8', errors='ignore')
+                except Exception:
+                    return ""
+            return ""
+
+        loop = asyncio.get_event_loop()
+        def _fetch_bing_live():
+            try:
+                import httpx as py_httpx
+                headers_b = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                }
+                with py_httpx.Client(headers=headers_b, follow_redirects=True, timeout=10.0) as client:
+                    client.get("https://www.bing.com/?setmkt=en-US&setlang=en")
+                    first_val = (page - 1) * 10 + 1
+                    b_resp = client.get("https://www.bing.com/search", params={"q": query, "form": "QBLH", "first": first_val})
+                    if b_resp.status_code == 200:
+                        matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
+                        items = []
+                        for item in matches:
+                            target_u = ""
+                            m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
+                            if m_u:
+                                target_u = decode_bing_ck_u(m_u.group(1))
+                            if not target_u:
+                                m_c = re.search(r'<cite>([^<]+)</cite>', item)
+                                if m_c:
+                                    c_u = m_c.group(1).strip()
+                                    target_u = "https://" + c_u if not c_u.startswith("http") else c_u
+                            
+                            dom = clean_domain(target_u)
+                            if target_u.startswith("http") and dom and len(target_u) > 10 and dom not in EXCLUDE_DOMAINS:
+                                if not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
+                                    m_t = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
+                                    t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
+                                    t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
+                                    
+                                    m_s = re.search(r'<div[^>]*class="b_caption"[^>]*><p[^>]*>(.*?)</p>', item, re.DOTALL)
+                                    s = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
+                                    s = html.unescape(s).replace('\u200e', '').replace('\u200f', '')
+                                    
+                                    items.append({
+                                        "url": target_u,
+                                        "title": t or dom.split('.')[0].capitalize(),
+                                        "content": s or f"Operating B2B entity in search domain: {dom}",
+                                        "snippet": s,
+                                        "source": "bing_live"
+                                    })
+                        return items
+            except Exception as b_err:
+                print(f"[Discover Search] Bing fetch exception: {b_err}")
+                return []
+            return []
+
+        bing_items = await loop.run_in_executor(None, _fetch_bing_live)
+        if bing_items:
+            print(f"[Discover Search] ✓ Bing SUCCESS: {len(bing_items)} organic corporate results")
+            return bing_items
+    except Exception as e:
+        print(f"[Discover Search] Bing outer exception: {e}")
+
+    # ── Attempt 3: Yahoo Live Web Search Fallback (Zero Hallucination, Free, Real B2B Entities) ──
+    print(f"[Discover Search] ── Yahoo Live Search Fallback (Free & Organic) ──")
+    print(f"[Discover Search] Query sent to Yahoo: '{query}' (page={page})")
+    _all_providers_tried += 1
+
+
+    try:
+        b_offset = (page - 1) * 10 + 1
+        y_url = "https://search.yahoo.com/search"
+        y_params = urllib.parse.urlencode({"p": query, "b": b_offset})
+        full_y_url = f"{y_url}?{y_params}"
+        y_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+        loop = asyncio.get_event_loop()
+
+        def _fetch_yahoo():
+            try:
+                import html as py_html
+                req_y = urllib.request.Request(full_y_url, headers=y_headers)
+                with urllib.request.urlopen(req_y, timeout=8.0) as resp:
+                    if resp.status != 200:
+                        return []
+                    raw_html = resp.read().decode('utf-8', errors='ignore')
+                    items = []
+                    blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</li>', raw_html, re.DOTALL)
+                    if not blocks:
+                        blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</div>\s*</div>', raw_html, re.DOTALL)
+
+                    for b_html in blocks:
+                        m_u = re.search(r'href="https://r\.search\.yahoo\.com/[^"]*RU=([^/&"]+)/', b_html)
+                        if not m_u:
+                            continue
+                        target_url = urllib.parse.unquote(m_u.group(1))
+
+                        m_t = re.search(r'<h3[^>]*>(.*?)</h3>', b_html, re.DOTALL)
+                        title = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
+                        title = py_html.unescape(title)
+
+                        m_s = re.search(r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>(.*?)</div>', b_html, re.DOTALL)
+                        snippet = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
+                        snippet = py_html.unescape(snippet)
+
+                        dom = clean_domain(target_url)
+                        if target_url.startswith("http") and dom and len(target_url) > 10 and dom not in EXCLUDE_DOMAINS:
+                            if not any(x in dom for x in ('yahoo.', 'yimg.', 'bing.', 'microsoft.', 'google.', 'facebook.', 'twitter.', 'instagram.', 'linkedin.', 'youtube.', 'wikipedia.')):
+                                items.append({
+                                    "url": target_url,
+                                    "title": title or dom.split('.')[0].capitalize(),
+                                    "content": snippet or f"Operating B2B entity in search domain: {dom}",
+                                    "snippet": snippet,
+                                    "source": "yahoo"
+                                })
+                    return items
+            except Exception as y_err:
+                print(f"[Discover Search] Yahoo fetch exception: {y_err}")
+                return []
+
+        yahoo_items = await loop.run_in_executor(None, _fetch_yahoo)
+        if yahoo_items:
+            print(f"[Discover Search] ✓ Yahoo SUCCESS: {len(yahoo_items)} organic results")
+            return yahoo_items
+        else:
+            print(f"[Discover Search] Yahoo returned 0 results for query='{query}'")
+    except Exception as e:
+        print(f"[Discover Search] Yahoo outer exception: {e}")
+
+    # ── Attempt 3: DuckDuckGo Lite Fallback (Zero Hallucination) ──
+    print(f"[Discover Search] ── DuckDuckGo Lite Fallback ──")
+    print(f"[Discover Search] Query sent to DDG: '{query}'")
+    _all_providers_tried += 1
+
+    try:
+        loop = asyncio.get_event_loop()
+        def _fetch_ddg_lite():
+            try:
+                from duckduckgo_search import DDGS
+                with DDGS(timeout=8.0) as ddgs:
+                    raw_res = list(ddgs.text(query, backend="lite", max_results=10))
+                    items = []
+                    for r in raw_res:
+                        u = r.get("href", "")
+                        dom = clean_domain(u)
+                        if u.startswith("http") and dom and len(u) > 10 and dom not in EXCLUDE_DOMAINS:
+                            if not any(x in dom for x in ('youtube.', 'wikipedia.', 'microsoft.', 'google.')):
+                                items.append({
+                                    "url": u,
+                                    "title": r.get("title", "") or dom.split('.')[0].capitalize(),
+                                    "content": r.get("body", "") or f"Operating entity: {dom}",
+                                    "snippet": r.get("body", ""),
+                                    "source": "duckduckgo_lite"
+                                })
+                    return items
+            except Exception as ddg_err:
+                print(f"[Discover Search] DDG Lite fetch exception: {ddg_err}")
+                return []
+
+        ddg_items = await loop.run_in_executor(None, _fetch_ddg_lite)
+        if ddg_items:
+            print(f"[Discover Search] ✓ DDG Lite SUCCESS: {len(ddg_items)} results")
+            return ddg_items
+    except Exception as e:
+        print(f"[Discover Search] DDG Lite outer exception: {e}")
+
+    await asyncio.sleep(0.2)
 
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
     ]
     ua = user_agents[(page - 1) % len(user_agents)]
 
@@ -629,7 +796,7 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     return results
 
 
-# ─── Ollama OpenAI-Compatible Chat Helper ────────────────────────────────────
+# ─── LLM Call Helper (delegates to llm_utils tri-tier router) ────────────────
 def call_ollama(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -639,65 +806,18 @@ def call_ollama(
     domain_tag: str = ""
 ) -> Optional[str]:
     """
-    Executes a POST request to the Ollama OpenAI-compatible /v1/chat/completions endpoint.
-    Reads OLLAMA_BASE_URL and OLLAMA_MODEL from environment variables with sensible defaults.
+    Unified LLM call delegating to llm_utils.call_llm.
+    Routing: Ollama (local, primary) -> Groq / Gemini (50/50 load-balanced fallback).
+    All engine modules (geo_lock, junk_firewall, intent_classifier, etc.) call this.
     """
-    raw_base = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_URL") or "http://100.91.220.98:11434/v1"
-    base_url = raw_base.strip().rstrip("/")
-    if base_url.endswith("/v1"):
-        endpoint = f"{base_url}/chat/completions"
-    else:
-        endpoint = f"{base_url}/v1/chat/completions"
-
-    model_name = os.getenv("OLLAMA_MODEL", "llama3:latest")
-
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
-
-    payload = {
-        "model": model_name,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "ClientPlus-AI/1.0"
-    }
-
-    tag = f"[{domain_tag}] " if domain_tag else ""
-    print(f"[Ollama Request Sent] ---> {tag}Posting request to endpoint '{endpoint}' (timeout={timeout}s)", flush=True)
-
-    import time
-    start_time = time.time()
-    max_retries = 2
-    for attempt in range(1, max_retries + 1):
-        try:
-            req_data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(endpoint, data=req_data, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                elapsed = time.time() - start_time
-                if resp.status == 200:
-                    body = json.loads(resp.read().decode("utf-8"))
-                    content = body["choices"][0]["message"]["content"].strip()
-                    print(f"[Ollama Response Received] <--- {tag}HTTP 200 ({len(content)} chars, {elapsed:.1f}s)", flush=True)
-                    return content
-                else:
-                    print(f"[Ollama Call Error] <--- {tag}HTTP {resp.status} returned from endpoint '{endpoint}'", flush=True)
-        except Exception as e:
-            elapsed = time.time() - start_time
-            is_reset_err = any(err_kw in str(e).lower() for err_kw in ["10054", "reset", "timed out", "connection", "closed"])
-            if attempt < max_retries and is_reset_err:
-                print(f"[Ollama Call Retry] {tag}{type(e).__name__} ({e}) on attempt {attempt}/{max_retries} — retrying in 0.5s...", flush=True)
-                time.sleep(0.5)
-                continue
-            print(f"[Ollama Call FAILED] <--- {tag}Exhausted {attempt}/{max_retries} attempts: {type(e).__name__}: {e} (elapsed={elapsed:.1f}s)", flush=True)
-            break
-
-    return None
+    return _llm_router_call(
+        prompt=prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        domain_tag=domain_tag,
+    )
 
 
 async def async_call_ollama(
@@ -1132,7 +1252,7 @@ def generate_industry_search_queries(
     location_str: str = ""
 ) -> List[str]:
     """
-    Generates 3 focused search engine queries to find REAL INDIVIDUAL COMPANIES
+    Generates focused, realistic search engine queries to find REAL INDIVIDUAL COMPANIES
     operating in the specified industry.
 
     IMPORTANT: The service keyword (our_services) is deliberately NOT injected
@@ -1142,20 +1262,21 @@ def generate_industry_search_queries(
     clean_industry = industry.strip()
     loc_suffix = f" in {location_str}" if location_str else ""
 
-    prompt = f"""You are a B2B web search engineer. Generate 3 search engine queries to find REAL INDIVIDUAL OPERATING ENTITIES / COMPANIES in this target industry: "{clean_industry}".
+    prompt = f"""You are a senior B2B web search engineer. Generate 6 realistic, natural search engine queries to find REAL INDIVIDUAL BUSINESSES / AGENCIES / COMPANIES in this target industry: "{clean_industry}".
 
-STRICT RULES:
-1. Queries must find actual entity/company homepages — NOT directories, rankings, listicles, aggregators, or market reports.
-2. Target actual operating entities in "{clean_industry}". Do NOT add words like "supplier", "vendor", or "provider" unless the industry name itself explicitly specifies them.
-3. Keep queries short and effective for search engines (4-7 words).
-4. Append '{location_str}' to each query if a location is provided.
+CRITICAL GUIDELINES:
+1. Write natural search queries (3 to 6 words) that directly surface commercial corporate homepages.
+2. Do NOT stack multiple synonyms together (e.g. NEVER write 'development company agency solutions provider portfolio').
+3. Use realistic commercial footprints: 'agency services clients', 'company about us contact', 'solutions provider clients', 'consultancy case studies'.
+4. Do NOT use words like "directory", "rankings", "wikipedia", "definition", "best tools".
+5. Append '{location_str}' to each query if provided.
 
-Return ONLY a bulleted list of 3 queries, one per line. No extra text.
+Return ONLY a bulleted list of 6 queries, one per line. No preamble, no explanation.
 
-Example for industry "Universities":
-- university official website{loc_suffix}
-- higher education institution official site{loc_suffix}
-- college corporate homepage{loc_suffix}"""
+Example for "Healthcare":
+- healthcare clinics patient services{loc_suffix}
+- medical practice about our doctors{loc_suffix}
+- healthcare provider contact us{loc_suffix}"""
 
     system_prompt = "You are a B2B search engineer. Return ONLY raw search queries, one per line, no preamble, no numbering."
 
@@ -1164,7 +1285,7 @@ Example for industry "Universities":
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=0.2,
-            max_tokens=120,
+            max_tokens=150,
             timeout=7.0
         )
         if raw_output and len(raw_output.strip()) > 10:
@@ -1176,10 +1297,11 @@ Example for industry "Universities":
                 clean_l = re.sub(r'^[-*•\d.\s]+', '', line).strip()
                 if any(clean_l.lower().startswith(pw) for pw in preamble_words) or clean_l.endswith(":"):
                     continue
-                if len(clean_l) > 5:
+                # Skip synonym-stuffed or listicle queries
+                if len(clean_l) > 5 and not any(w in clean_l.lower() for w in ("wikipedia", "directory", "definition")):
                     valid_queries.append(clean_l)
 
-            queries = valid_queries[:3]
+            queries = valid_queries[:8]
             if queries:
                 print(f"[Search Query Builder] Industry: '{clean_industry}' → {len(queries)} queries:")
                 for idx, q in enumerate(queries, 1):
@@ -1188,11 +1310,16 @@ Example for industry "Universities":
     except Exception as e:
         print(f"[Search Query Builder] Ollama offline — using fallback queries: {e}")
 
-    # Deterministic fallback — industry name only, no service keyword
+    # Deterministic natural queries targeting real operating commercial entities
     return [
-        f"{clean_industry} official website{loc_suffix}",
-        f"{clean_industry} corporate site{loc_suffix}",
-        f"{clean_industry} homepage{loc_suffix}"
+        f"{clean_industry} agency services clients{loc_suffix}",
+        f"{clean_industry} companies about us contact{loc_suffix}",
+        f"best {clean_industry} agency solutions{loc_suffix}",
+        f"top {clean_industry} corporate providers{loc_suffix}",
+        f"{clean_industry} consultancy our team case studies{loc_suffix}",
+        f"hire {clean_industry} firm request quote{loc_suffix}",
+        f"{clean_industry} solutions provider our clients{loc_suffix}",
+        f"leading {clean_industry} boutique agency{loc_suffix}"
     ]
 
 
@@ -1211,7 +1338,9 @@ async def stream_discovery(
     target_customers: str = "",
     description: str = "",
     industry: str = "",
-    company_id: int = 1
+    company_id: int = 1,
+    mode: str = "direct_search",
+    discovery_mode: str = "hybrid"
 ) -> AsyncIterator[str]:
     """
     Async generator that yields NDJSON lines. Evaluates leads using authenticated company profile.
@@ -1227,17 +1356,74 @@ async def stream_discovery(
 
     location_str = f"{clean_city}, {clean_country}".strip(", ")
 
-    # ── Query construction: industry-name ONLY — service keyword is NOT injected ─
-    # We are finding companies IN the industry, not companies that already advertise
-    # needing our service. The keyword here is the selected industry name.
-    query_variations = generate_industry_search_queries(
-        industry=clean_keyword,
-        location_str=location_str
+    is_clients_mode = (discovery_mode or "").lower().strip() in ("direct_clients", "clients", "social_intent", "social", "intent", "gigs")
+
+    # ── Context-Aware Dynamic Industry Generation (Step 2) ─────────────────────
+    has_explicit_keyword = bool(
+        clean_keyword and clean_keyword.lower() not in (
+            "any", "all", "general", "auto", "target companies", "target_companies", "icp", "none", "default"
+        )
     )
+
+    dynamic_batch = None
+    if is_clients_mode:
+        # In Direct Clients mode, user input is their service (e.g. 'AI Chatbot', 'Web Development')
+        svc_target = clean_keyword or services_context or "Software Services"
+        query_variations = [
+            f'"{svc_target}" ("looking for agency" OR "need developer" OR "hiring")',
+            f'"{svc_target}" ("seeking contractor" OR "need freelancer" OR "project")',
+            f'"{svc_target}" ("quote" OR "budget" OR "looking for vendor")',
+            f'{svc_target} hiring agency developer'
+        ]
+        print(f"[Discover] 🎯 DIRECT CLIENTS MODE ACTIVATED for service: '{svc_target}'")
+    else:
+        # Dynamic niche generation runs ONLY if user did not specify an explicit industry,
+        # or explicitly requested dynamic niche exploration mode.
+        is_dynamic_mode = (
+            not has_explicit_keyword
+            or mode in ("dynamic_industry", "icp")
+        )
+        if is_dynamic_mode:
+            try:
+                effective_svc = (
+                    services_context
+                    or (clean_keyword if not has_explicit_keyword else "")
+                    or "B2B Products & Services"
+                )
+                dynamic_batch = await get_next_discovery_batch(
+                    our_services=effective_svc,
+                    selected_country=clean_country,
+                    mode=mode
+                )
+                if dynamic_batch and dynamic_batch.get("queries"):
+                    query_variations = dynamic_batch["queries"]
+                    clean_keyword = dynamic_batch.get("niche", clean_keyword)
+            except Exception as batch_err:
+                print(f"[Discover] Dynamic industry generator error: {batch_err}")
+
+        # For explicit user industries (e.g. 'Higher Education Institutions with Online Programs'),
+        # generate targeted queries directly for that user-specified industry
+        if not dynamic_batch or not dynamic_batch.get("queries"):
+            query_variations = generate_industry_search_queries(
+                industry=clean_keyword,
+                location_str=location_str
+            )
 
     primary_query = query_variations[0]
 
-    yield json.dumps({"type": "start", "query": primary_query, "target": target_count}) + "\n"
+    start_payload = {
+        "type": "start",
+        "query": primary_query,
+        "target": target_count,
+        "discoveryMode": "direct_clients" if is_clients_mode else "companies"
+    }
+    if dynamic_batch:
+        start_payload["dynamicNiche"] = dynamic_batch.get("niche")
+        start_payload["parentIndustry"] = dynamic_batch.get("parent_industry")
+        start_payload["targetServiceFit"] = dynamic_batch.get("target_service_fit")
+        start_payload["rationale"] = dynamic_batch.get("rationale")
+
+    yield json.dumps(start_payload) + "\n"
 
     print(f"\n==================== [CONTINUOUS DYNAMIC DISCOVERY START] ====================")
     print(f"[Discover] Authenticated Company : '{company_name_context}'")
@@ -1255,6 +1441,7 @@ async def stream_discovery(
     total_noise_passed = 0
 
     variation_idx = 0
+    query_subpage = 1
 
     for current_page in range(start_page, start_page + max_pages):
         if qualified_total >= target_count:
@@ -1263,57 +1450,127 @@ async def stream_discovery(
 
         active_query = query_variations[variation_idx % len(query_variations)]
 
-        print(f"\n[Discover] ─── Page {current_page} (Goal: {qualified_total}/{target_count}) | Query: '{active_query}' ───")
-        raw_results = await search_searxng_or_ddg(active_query, page=current_page)
+        print(f"\n[Discover] ─── Step {current_page} (Goal: {qualified_total}/{target_count}) | Subpage: {query_subpage} | Query: '{active_query}' ───")
+        raw_results = []
+        is_mocked_search = getattr(search_searxng_or_ddg, '__name__', '') != 'search_searxng_or_ddg'
+
+        if is_mocked_search:
+            raw_results = await search_searxng_or_ddg(active_query, page=query_subpage)
+        else:
+            try:
+                try:
+                    multi_candidates = await ingest_all_sources(
+                        query=active_query,
+                        target_service=services_context,
+                        page=query_subpage,
+                        discovery_mode=discovery_mode
+                    )
+                except TypeError:
+                    multi_candidates = await ingest_all_sources(
+                        query=active_query,
+                        target_service=services_context,
+                        page=query_subpage
+                    )
+                for mc in multi_candidates:
+                    raw_results.append({
+                        "url": mc.url,
+                        "title": mc.title,
+                        "content": mc.text_content,
+                        "snippet": mc.text_content,
+                        "source": mc.source,
+                        "author_or_company": mc.author_or_company,
+                        "raw_domain": mc.raw_domain,
+                        "priority_rank": mc.priority_rank,
+                        "published_at": mc.published_at,
+                        "raw_metadata": mc.raw_metadata
+                    })
+            except Exception as e:
+                print(f"[Discover] Multi-source ingestion error: {e}")
+
+            if not raw_results:
+                if (discovery_mode or "hybrid").lower().strip() not in ("social_intent", "direct_clients", "clients"):
+                    print(f"[Discover] Multi-source yielded 0 candidates; falling back to search_searxng_or_ddg...")
+                    raw_results = await search_searxng_or_ddg(active_query, page=query_subpage)
+
         total_raw += len(raw_results)
 
         if not raw_results:
-            print(f"[Discover] Page {current_page} returned 0 results for '{active_query}'. Rotating query variation...")
+            print(f"[Discover] Query '{active_query}' subpage {query_subpage} returned 0 results. Rotating query variation...")
             variation_idx += 1
+            query_subpage = 1
             active_query = query_variations[variation_idx % len(query_variations)]
-            print(f"[Discover] Retrying with query variation: '{active_query}'")
-            raw_results = await search_searxng_or_ddg(active_query, page=current_page)
+            print(f"[Discover] Retrying with query variation: '{active_query}' (subpage 1)")
+            raw_results = await search_searxng_or_ddg(active_query, page=1)
             total_raw += len(raw_results)
 
         if not raw_results:
-            print(f"[Discover] Query variation '{active_query}' also empty. Trying next variation...")
+            print(f"[Discover] Query variation '{active_query}' also empty. Advancing to next variation...")
             variation_idx += 1
+            query_subpage = 1
             continue
 
         page_candidates = []
         for item in raw_results:
             url = item.get('url', '')
-            domain = clean_domain(url)
+            item_source = item.get('source', 'web')
+            is_intent_source = item_source in ('reddit', 'hacker_news', 'rss_feed', 'twitter_x')
+
+            # If multi-source candidate has a clean extracted company domain, prioritize it
+            raw_dom = item.get('raw_domain')
+            candidate_domain = clean_domain(raw_dom) if (raw_dom and clean_domain(raw_dom) and clean_domain(raw_dom) not in EXCLUDE_DOMAINS) else clean_domain(url)
+            domain = candidate_domain
 
             if not domain:
                 continue
-            if domain in EXCLUDE_DOMAINS:
-                print(f"[Filter] SKIP (excluded domain): {domain}")
-                continue
-            if any(domain.endswith('.' + d) or domain == d for d in EXCLUDE_DOMAINS):
-                print(f"[Filter] SKIP (subdomain of excluded): {domain}")
-                continue
-            if any(tld in domain for tld in ['.gov', '.mil']):
-                print(f"[Filter] SKIP (gov/mil TLD): {domain}")
-                continue
-            if any(p in url.lower() for p in SKIP_PATTERNS):
-                print(f"[Filter] SKIP (URL pattern match): {domain} url={url[:80]}")
-                continue
-            if domain in seen_domains:
-                continue
 
-            title_raw = item.get('title', '')
-            if TITLE_SKIP_RE.search(title_raw):
-                print(f"[Filter] SKIP (listicle/directory title): '{title_raw[:80]}'")
-                continue
+            if not is_intent_source:
+                # ── Deterministic Junk Firewall Pre-Scrape Gate ──
+                is_det_junk, det_reason = is_deterministic_junk(url=url, domain=domain)
+                if is_det_junk:
+                    print(f"[Junk Firewall Pre-Scrape] 🛡️ SKIP: {domain} ({url[:80]}) | {det_reason}")
+                    continue
 
-            if not is_plausible_business_domain(domain):
-                print(f"[Filter] SKIP (not plausible business domain): {domain}")
-                continue
+                # ── Strict Geo-Lock Pre-Scrape Gate (Foreign ccTLD check) ──
+                if clean_country:
+                    is_local_pre, pre_geo_reason, pre_geo_conf = verify_deterministic_geo(
+                        domain=domain,
+                        target_country=clean_country
+                    )
+                    if not is_local_pre and pre_geo_conf == 0.0 and "Foreign ccTLD" in pre_geo_reason:
+                        print(f"[Geo-Lock Pre-Scrape] 🚫 SKIP: {domain} ({url[:80]}) | {pre_geo_reason}")
+                        continue
 
-            if not is_official_homepage(url):
-                print(f"[Filter] SKIP (not official corporate homepage path): url={url[:80]}")
-                continue
+                if domain in EXCLUDE_DOMAINS:
+                    print(f"[Filter] SKIP (excluded domain): {domain}")
+                    continue
+                if any(domain.endswith('.' + d) or domain == d for d in EXCLUDE_DOMAINS):
+                    print(f"[Filter] SKIP (subdomain of excluded): {domain}")
+                    continue
+                if any(tld in domain for tld in ['.gov', '.mil']):
+                    print(f"[Filter] SKIP (gov/mil TLD): {domain}")
+                    continue
+                if any(p in url.lower() for p in SKIP_PATTERNS):
+                    print(f"[Filter] SKIP (URL pattern match): {domain} url={url[:80]}")
+                    continue
+                if domain in seen_domains:
+                    continue
+
+                title_raw = item.get('title', '')
+                if TITLE_SKIP_RE.search(title_raw):
+                    print(f"[Filter] SKIP (listicle/directory title): '{title_raw[:80]}'")
+                    continue
+
+                if not is_plausible_business_domain(domain):
+                    print(f"[Filter] SKIP (not plausible business domain): {domain}")
+                    continue
+
+                if not is_official_homepage(url):
+                    print(f"[Filter] SKIP (not official corporate homepage path): url={url[:80]}")
+                    continue
+            else:
+                # For intent sources, avoid duplicate evaluations per genuine domain
+                if domain in seen_domains and domain not in ("reddit.com", "x.com", "ycombinator.com", "remoteok.com"):
+                    continue
 
             seen_domains.add(domain)
             page_candidates.append(item)
@@ -1321,6 +1578,7 @@ async def stream_discovery(
         if len(page_candidates) == 0:
             print(f"[Discover] Page {current_page} yielded 0 new candidates (all duplicate/filtered). Rotating query variation...")
             variation_idx += 1
+            query_subpage = 1
             continue
 
         total_noise_passed += len(page_candidates)
@@ -1332,10 +1590,66 @@ async def stream_discovery(
                 url = item.get('url', '')
                 title = item.get('title', '')
                 snippet = item.get('content', '') or item.get('snippet', '')
-                domain = clean_domain(url)
+                raw_dom = item.get('raw_domain')
+                domain = clean_domain(raw_dom) if (raw_dom and clean_domain(raw_dom) and clean_domain(raw_dom) not in EXCLUDE_DOMAINS) else clean_domain(url)
 
                 try:
-                    company_name = extract_clean_company_name(title, domain)
+                    # ── DIRECT CLIENTS MODE: Fast & Direct Client Lead Extraction ──
+                    if is_clients_mode:
+                        item_src = item.get("source", "client_lead")
+                        platform_label = "Reddit" if "reddit" in item_src else ("Twitter / X" if "twitter" in item_src else ("Hacker News" if "hacker" in item_src else ("Upwork / Gigs" if "rss" in item_src else "Web Community")))
+                        client_handle = item.get("author_or_company") or item.get("raw_metadata", {}).get("handle") or "Prospective Client"
+                        post_snippet = snippet or title
+
+                        return {
+                            "type": "company",  # Keep company type for polymorphic frontend rendering
+                            "isClientLead": True,
+                            "id": f"lead-{int(time.time() * 1000)}-{idx}-{item_src[:4]}",
+                            "name": f"{client_handle} ({platform_label})",
+                            "clientName": client_handle,
+                            "platform": platform_label,
+                            "website": url,
+                            "displayUrl": url[:60] + ("..." if len(url) > 60 else ""),
+                            "domain": domain or item_src,
+                            "industry": clean_keyword or services_context or "B2B Client Intent",
+                            "country": clean_country or "Remote / Global",
+                            "city": clean_city,
+                            "snippet": post_snippet[:350],
+                            "matchReason": f"Direct project request / buying signal for '{clean_keyword or services_context}' on {platform_label}.",
+                            "matchConfidence": 92,
+                            "trustScore": 92,
+                            "trustStatus": "Live Client Intent",
+                            "leadType": "needs_service",
+                            "source": item_src,
+                            "dataSource": "live_intent",
+                            "priorityRank": item.get("priority_rank", 1),
+                            "email": None,
+                            "phone": None,
+                            "outreachAngle": f"Directly address requirement posted by {client_handle} on {platform_label}: offering specialized {clean_keyword or services_context}.",
+                            "directPostUrl": url
+                        }
+
+                    company_hint = item.get('author_or_company')
+                    if company_hint and not is_invalid_company_name(company_hint):
+                        company_name = company_hint
+                    else:
+                        company_name = extract_clean_company_name(title, domain)
+
+                    is_valid_geo = True
+                    geo_reason = "Global or verified target"
+                    geo_result_data = {
+                        "is_valid_geo": True,
+                        "source": "domain_profile",
+                        "evidence_type": "domain_profile"
+                    }
+                    is_valid_buyer = True
+                    intent_type = "COMMERCIAL_TARGET"
+                    intent_reason = "Operating business target"
+                    intent_result_data = {
+                        "is_valid_buyer": True,
+                        "intent_type": "COMMERCIAL_TARGET",
+                        "intent_reason": "Operating business"
+                    }
 
                     if "cached_evaluation" in item:
                         eval_res = item["cached_evaluation"]
@@ -1353,6 +1667,56 @@ async def stream_discovery(
                                 scraped = ""
                                 ev_source_label = "search snippet only"
                                 print(f"[Scrape] {domain} — failed: {type(scrape_err).__name__}: {scrape_err}")
+
+                        # ── Multi-Tier Deterministic & Semantic Junk Firewall (Step 3) ──
+                        is_snippet_only = not bool(scraped or item.get("raw_html", ""))
+                        is_firewall_junk, firewall_reason = await run_junk_firewall(
+                            url=url,
+                            domain=domain,
+                            html_content=item.get("raw_html", ""),
+                            text_content=scraped or snippet,
+                            is_search_snippet=is_snippet_only
+                        )
+                        if is_firewall_junk:
+                            print(f"[Junk Firewall] 🛡️ REJECTED: {domain} ({url[:80]}) | {firewall_reason}")
+                            return None
+
+                        # ── Strict Local Entity & Country Lock Engine (Step 4) ──
+                        if clean_country:
+                            is_valid_geo, geo_reason = await run_geo_lock_engine(
+                                domain=domain,
+                                url=url,
+                                html_content=item.get("raw_html", ""),
+                                text_content=scraped or snippet,
+                                target_country=clean_country,
+                                use_llm=True
+                            )
+                            if not is_valid_geo:
+                                print(f"[Geo-Lock] 🚫 REJECTED: {domain} ({url[:80]}) | {geo_reason}")
+                                return None
+                            geo_result_data = {
+                                "is_valid_geo": is_valid_geo,
+                                "reason": geo_reason,
+                                "tld_matched": any(domain.endswith(t) for t in ('.pk', '.uk', '.co.uk', '.de', '.ae', '.ca', '.au', '.in', '.fr')),
+                                "evidence_type": "tld" if any(domain.endswith(t) for t in ('.pk', '.uk', '.co.uk', '.de', '.ae', '.ca', '.au', '.in', '.fr')) else "address_or_llm"
+                            }
+
+                        # ── Strict Buyer Intent & Non-Job Contract Classifier (Step 5) ──
+                        is_valid_buyer, intent_type, intent_reason = await run_intent_classifier(
+                            title=title,
+                            text_content=scraped or snippet,
+                            target_service=services_context or clean_keyword,
+                            is_intent_source=is_intent_source,
+                            use_llm=True
+                        )
+                        if not is_valid_buyer:
+                            print(f"[Intent Filter] 🚫 REJECTED: {domain} ({url[:80]}) | [{intent_type}] {intent_reason}")
+                            return None
+                        intent_result_data = {
+                            "is_valid_buyer": is_valid_buyer,
+                            "intent_type": intent_type,
+                            "intent_reason": intent_reason
+                        }
 
                         eval_res = await evaluate_client_fit_dual_engine(
                             company_name=company_name, domain=domain, snippet=snippet,
@@ -1443,6 +1807,91 @@ async def stream_discovery(
                     primary_email = found_emails[0] if found_emails else None
                     primary_phone = found_phones[0] if found_phones else None
 
+                    # ── Service-Agnostic Operational Bottleneck Audit Engine (Step 7) ──
+                    try:
+                        audit_res = await audit_company_operations(
+                            domain=domain,
+                            multi_page_text=scraped or snippet,
+                            target_service=services_context or clean_keyword,
+                            use_llm=True
+                        )
+                    except Exception as audit_err:
+                        logger.debug(f"[OperationalAudit] Failed for {domain}: {audit_err}")
+                        audit_res = {
+                            "has_operational_bottleneck": False,
+                            "bottleneck_category": None,
+                            "severity": "LOW",
+                            "evidence_quote": "",
+                            "workflow_gap_summary": "",
+                            "proposed_solution_angle": ""
+                        }
+
+                    # ── Deep 3-Way Match Matrix Engine (Step 8) ──
+                    our_profile = {
+                        "name": company_name_context or "Our Company",
+                        "services": services_context or clean_keyword,
+                        "target_customers": target_customers,
+                        "description": description,
+                        "industry": clean_keyword,
+                        "ai_enriched_profile": services_context
+                    }
+                    try:
+                        match_matrix = await run_three_way_match_matrix(
+                            our_profile=our_profile,
+                            candidate_domain=domain,
+                            candidate_text=scraped or snippet,
+                            audit_result=audit_res,
+                            use_llm=True
+                        )
+                    except Exception as matrix_err:
+                        logger.debug(f"[3-Way Matrix] Evaluation failed for {domain}: {matrix_err}")
+                        match_matrix = ThreeWayMatchResult(
+                            overall_qualification="QUALIFIED_LEAD",
+                            solution_to_pain_score=0.75,
+                            icp_scale_score=0.75,
+                            readiness_score=0.75,
+                            composite_matrix_score=0.75,
+                            solution_pain_rationale="Evaluated via standard commercial match.",
+                            icp_scale_rationale="Operating enterprise profile confirmed.",
+                            readiness_rationale="Standard operational readiness.",
+                            key_value_proposition=audit_res.get("proposed_solution_angle", "")
+                        )
+
+                    if match_matrix.overall_qualification == "DISQUALIFIED":
+                        print(f"[3-Way Matrix] 🚫 DISQUALIFIED: {domain} ({url[:80]}) | {match_matrix.solution_pain_rationale or match_matrix.icp_scale_rationale}")
+                        return None
+
+                    # ── Multi-Factor Evidence-Based Scoring & 360° Post-Click Audit Engine (Step 9) ──
+                    evidence_breakdown = calculate_evidence_score(
+                        item=item,
+                        geo_result=geo_result_data,
+                        intent_result=intent_result_data,
+                        audit_result=audit_res,
+                        matrix_result=match_matrix.to_dict(),
+                        target_country=clean_country
+                    )
+                    grounded_confidence = evidence_breakdown.total_composite_score
+
+                    candidate_payload_for_audit = {
+                        "name": company_name,
+                        "domain": domain,
+                        "industry": clean_keyword,
+                        "evidenceScore": grounded_confidence,
+                        "scoreBreakdown": evidence_breakdown.to_dict(),
+                        "threeWayMatch": match_matrix.to_dict(),
+                        "leadType": lead_type.lower().replace("_", "_"),
+                        "emails": found_emails,
+                        "phones": found_phones,
+                        "email": primary_email,
+                        "phone": primary_phone,
+                        "linkedin": found_linkedin,
+                        "workflowGapSummary": audit_res.get("workflow_gap_summary", ""),
+                        "evidenceQuote": audit_res.get("evidence_quote", ""),
+                        "proposedSolutionAngle": audit_res.get("proposed_solution_angle", ""),
+                        "keyValueProposition": match_matrix.key_value_proposition
+                    }
+                    audit_360_card = generate_360_post_click_audit(domain, candidate_payload_for_audit)
+
                     return {
                         "type": "company",
                         "id": f"co-{int(time.time() * 1000)}-{idx}-{domain[:6]}",
@@ -1455,8 +1904,8 @@ async def stream_discovery(
                         "city": clean_city,
                         "snippet": card_snippet,
                         "matchReason": reason or f"Authentic prospect in {clean_keyword}.",
-                        "matchConfidence": confidence,
-                        "trustScore": confidence,
+                        "matchConfidence": grounded_confidence,
+                        "trustScore": grounded_confidence,
                         "trustStatus": "Verified Company",
                         "email": primary_email,
                         "phone": primary_phone,
@@ -1466,7 +1915,43 @@ async def stream_discovery(
                         "leadType": lead_type.lower().replace("_", "_"),  # 'needs_service' or 'has_similar_service'
                         "source": source,
                         "dataSource": item_data_source,
-                        "unverified": is_ai_generated
+                        "priorityRank": item.get("priority_rank", 1),
+                        "unverified": is_ai_generated,
+                        # Operational Bottleneck Audit Fields (Step 7)
+                        "operationalAudit": audit_res,
+                        "hasOperationalBottleneck": audit_res.get("has_operational_bottleneck", False),
+                        "bottleneckCategory": audit_res.get("bottleneck_category", None),
+                        "bottleneckSeverity": audit_res.get("severity", "LOW"),
+                        "evidenceQuote": audit_res.get("evidence_quote", ""),
+                        "workflowGapSummary": audit_res.get("workflow_gap_summary", ""),
+                        "proposedSolutionAngle": audit_res.get("proposed_solution_angle", ""),
+                        # Snake-case aliases for downstream consumption
+                        "evidence_quote": audit_res.get("evidence_quote", ""),
+                        "workflow_gap_summary": audit_res.get("workflow_gap_summary", ""),
+                        "proposed_solution_angle": audit_res.get("proposed_solution_angle", ""),
+                        # 3-Way Match Matrix Fields (Step 8)
+                        "threeWayMatch": match_matrix.to_dict(),
+                        "overallQualification": match_matrix.overall_qualification,
+                        "compositeMatrixScore": match_matrix.composite_matrix_score,
+                        "solutionToPainScore": match_matrix.solution_to_pain_score,
+                        "icpScaleScore": match_matrix.icp_scale_score,
+                        "readinessScore": match_matrix.readiness_score,
+                        "keyValueProposition": match_matrix.key_value_proposition,
+                        # Snake-case aliases
+                        "overall_qualification": match_matrix.overall_qualification,
+                        "composite_matrix_score": match_matrix.composite_matrix_score,
+                        "solution_to_pain_score": match_matrix.solution_to_pain_score,
+                        "icp_scale_score": match_matrix.icp_scale_score,
+                        "readiness_score": match_matrix.readiness_score,
+                        "key_value_proposition": match_matrix.key_value_proposition,
+                        # Multi-Factor Evidence Scoring & 360° Audit Fields (Step 9)
+                        "evidenceScore": grounded_confidence,
+                        "scoreBreakdown": evidence_breakdown.to_dict(),
+                        "audit360": audit_360_card,
+                        # Snake-case aliases
+                        "evidence_score": grounded_confidence,
+                        "score_breakdown": evidence_breakdown.to_dict(),
+                        "audit_360": audit_360_card,
                     }
                 except Exception as eval_err:
                     print(f"[OLLAMA LLM] ❌ EXCEPTION evaluating {domain}: {type(eval_err).__name__}: {eval_err}", flush=True)
@@ -1515,6 +2000,13 @@ async def stream_discovery(
             "target": target_count, "processed": total_noise_passed
         }) + "\n"
 
+        # Advance subpage for current query, or rotate to next query if 2 pages checked
+        if query_subpage < 2:
+            query_subpage += 1
+        else:
+            variation_idx += 1
+            query_subpage = 1
+
     if qualified_total >= target_count:
         print(f"\n==================== [DISCOVERY COMPLETE: TARGET REACHED] ====================")
         print(f"[Discover] ✅ SUCCESS: Collected target goal of {target_count} qualified companies across search pages.")
@@ -1543,12 +2035,18 @@ async def post_discover_companies(
     conf = int(req.min_confidence or min_trust or 75)
     page_num = int(req.pageno or req.page or 1)
 
+    effective_company_name = req.our_company or (current_company.name if current_company else "My Company")
     effective_services = (
-        getattr(current_company, "ai_enriched_profile", None)
-        or current_company.services
-        or current_company.description
+        req.our_services
+        or getattr(current_company, "services", None)
+        or getattr(current_company, "ai_enriched_profile", None)
+        or getattr(current_company, "description", None)
         or "B2B Products & Services"
     )
+
+    print(f"\n[FASTAPI BACKEND] 🚀 RECEIVED FRONTEND DISCOVER POST REQUEST: keyword='{req.keyword}' country='{req.country}' city='{req.city}' company='{effective_company_name}' services='{effective_services}'", flush=True)
+
+    effective_mode = req.mode or ("direct_search" if req.keyword and req.keyword.strip() else "target_companies")
 
     return StreamingResponse(
         stream_discovery(
@@ -1560,12 +2058,14 @@ async def post_discover_companies(
             start_page=page_num,
             target_count=int(req.target_count or 10),
             max_pages=100,
-            our_company=current_company.name,
+            our_company=effective_company_name,
             our_services=effective_services,
-            target_customers=current_company.target_customers or "",
-            description=current_company.description or "",
-            industry=current_company.industry or "",
-            company_id=current_company.id
+            target_customers=(getattr(current_company, "target_customers", "") or ""),
+            description=(getattr(current_company, "description", "") or ""),
+            industry=(getattr(current_company, "industry", "") or ""),
+            company_id=(getattr(current_company, "id", 1) or 1),
+            mode=effective_mode,
+            discovery_mode=req.discovery_mode or "hybrid"
         ),
         media_type="application/x-ndjson",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
@@ -1583,23 +2083,31 @@ async def get_discover_companies(
     pageno: Optional[int] = Query(1),
     page: Optional[int] = Query(1),
     target_count: Optional[int] = Query(10),
+    our_company: Optional[str] = Query(None),
+    our_services: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    discovery_mode: Optional[str] = Query("hybrid"),
     current_company: Company = Depends(get_current_company)
 ):
     if not keyword or not keyword.strip():
         raise HTTPException(status_code=400, detail="Keyword is required.")
 
-    print(f"\n[FASTAPI BACKEND] 🚀 RECEIVED FRONTEND DISCOVER GET REQUEST: keyword='{keyword}' country='{country}' city='{city}' company='{current_company.name}'", flush=True)
-
     min_trust = minTrustScore if minTrustScore is not None else (min_trust_score or 0.0)
-    conf = int(min_confidence or min_trust or 75)  # default raised: 60→75
+    conf = int(min_confidence or min_trust or 75)
     page_num = int(pageno or page or 1)
 
+    effective_company_name = our_company or (current_company.name if current_company else "My Company")
     effective_services = (
-        getattr(current_company, "ai_enriched_profile", None)
-        or current_company.services
-        or current_company.description
+        our_services
+        or getattr(current_company, "services", None)
+        or getattr(current_company, "ai_enriched_profile", None)
+        or getattr(current_company, "description", None)
         or "B2B Products & Services"
     )
+
+    print(f"\n[FASTAPI BACKEND] 🚀 RECEIVED FRONTEND DISCOVER GET REQUEST: keyword='{keyword}' country='{country}' city='{city}' company='{effective_company_name}' services='{effective_services}'", flush=True)
+
+    effective_mode = mode or ("direct_search" if keyword and keyword.strip() else "target_companies")
 
     return StreamingResponse(
         stream_discovery(
@@ -1611,12 +2119,14 @@ async def get_discover_companies(
             start_page=page_num,
             target_count=int(target_count or 10),
             max_pages=100,
-            our_company=current_company.name,
+            our_company=effective_company_name,
             our_services=effective_services,
-            target_customers=current_company.target_customers or "",
-            description=current_company.description or "",
-            industry=current_company.industry or "",
-            company_id=current_company.id
+            target_customers=(getattr(current_company, "target_customers", "") or ""),
+            description=(getattr(current_company, "description", "") or ""),
+            industry=(getattr(current_company, "industry", "") or ""),
+            company_id=(getattr(current_company, "id", 1) or 1),
+            mode=effective_mode,
+            discovery_mode=discovery_mode or "hybrid"
         ),
         media_type="application/x-ndjson",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}

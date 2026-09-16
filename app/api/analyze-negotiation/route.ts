@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedCompany } from '../auth-helper';
 
+function getBackendUrl(): string {
+  const envUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl || envUrl.startsWith('/')) {
+    return 'http://localhost:8000';
+  }
+  return envUrl.replace(/\/$/, '');
+}
+
 export async function POST(req: NextRequest) {
   let ourCompanyName = 'WTechX';
   let company_name = 'the prospect company';
@@ -54,31 +62,24 @@ Return ONLY pure JSON matching this exact structure:
   "body": "full counter-reply email body text"
 }`;
 
-    const rawBaseUrl = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || 'http://100.91.220.98:11434/v1';
-    const baseUrl = rawBaseUrl.trim().replace(/\/$/, '');
-    const ollamaEndpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-    const modelName = process.env.OLLAMA_MODEL || 'llama3:latest';
+    const backendBase = getBackendUrl();
+    console.log(`[LLM Negotiation Analysis] Analyzing client reply for ${company_name} on behalf of ${ourCompanyName} via backend proxy...`);
 
-    console.log(`[Ollama Negotiation Analysis] Analyzing client reply for ${company_name} on behalf of ${ourCompanyName}...`);
-
-    const groqRes = await fetch(ollamaEndpoint, {
+    const proxyRes = await fetch(`${backendBase}/llm-proxy`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: modelName,
-        messages: [{ role: 'user', content: systemPrompt }],
+        prompt: systemPrompt,
         temperature: 0.3,
         max_tokens: 600,
-        response_format: { type: 'json_object' },
+        domain_tag: 'negotiation-analysis',
       }),
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(30000),
     });
 
-    if (!groqRes.ok) {
-      const errText = await groqRes.text().catch(() => '');
-      console.warn(`[Groq Negotiation Analysis] HTTP ${groqRes.status}: ${errText}`);
+    if (!proxyRes.ok) {
+      const errText = await proxyRes.text().catch(() => '');
+      console.warn(`[LLM Negotiation Analysis] Backend proxy HTTP ${proxyRes.status}: ${errText}`);
       return NextResponse.json({
         objection_type: 'Technical & Commercial Alignment',
         detected_intent: 'Client replied with questions regarding implementation and terms.',
@@ -88,8 +89,8 @@ Return ONLY pure JSON matching this exact structure:
       });
     }
 
-    const data = await groqRes.json();
-    const rawContent = data.choices?.[0]?.message?.content?.trim() || '{}';
+    const data = await proxyRes.json();
+    let rawContent = (data.content || '').replace(/```json/gi, '').replace(/```/g, '').trim();
     let parsed: {
       objection_type?: string;
       detected_intent?: string;

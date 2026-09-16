@@ -257,12 +257,30 @@ def get_current_company(credentials: HTTPAuthorizationCredentials = Depends(secu
             detail="Invalid, expired, or missing JWT authorization token."
         )
 
-    company_id = int(payload["sub"])
-    company = db.query(Company).filter(Company.id == company_id).first()
+    company = None
+    sub_val = str(payload.get("sub", "")).strip()
+
+    # 1. Try resolving by numeric company ID
+    if sub_val.isdigit():
+        try:
+            company = db.query(Company).filter(Company.id == int(sub_val)).first()
+        except Exception:
+            company = None
+
+    # 2. Try resolving by email from payload or sub
+    if not company:
+        email_cand = payload.get("email") or (sub_val if "@" in sub_val else None)
+        if email_cand:
+            company = db.query(Company).filter(Company.email == email_cand.lower().strip()).first()
+
+    # 3. Try resolving by company name in sub
+    if not company and sub_val:
+        company = db.query(Company).filter(Company.name.ilike(sub_val)).first()
+
     if not company:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Authenticated company profile no longer exists in system."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authenticated company profile '{sub_val}' no longer exists in database. Please sign in again."
         )
 
     return company
