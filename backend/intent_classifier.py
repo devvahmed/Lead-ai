@@ -172,8 +172,8 @@ POST / PAGE CONTENT:
 TASK:
 Determine if this posting or company represents:
 1. "CONTRACT_BUYER": An organization actively seeking an external agency, contractor, vendor, RFP, or project partner.
-2. "COMMERCIAL_TARGET": An active operating commercial company (e.g., manufacturing plant, logistics warehouse, hospital, retailer) that buys B2B products and services.
-3. "SELLER_AGENCY": A competing agency, freelancer, or software development shop trying to SELL their own services.
+2. "COMMERCIAL_TARGET": An operating commercial business (e.g., e-commerce store, consumer brand selling products/clothing/goods online, medical clinic, logistics warehouse, manufacturer, restaurant, hotel) that buys B2B products and services. (THESE ARE TARGET BUYERS).
+3. "SELLER_AGENCY": A competing digital marketing, IT, web design, or software development agency trying to SELL IT/software/marketing services. (NOTE: Retail brands or e-commerce stores selling physical goods to shoppers are COMMERCIAL_TARGET, NOT seller agencies).
 4. "STANDARD_EMPLOYMENT_JOB": A standard 9-to-5 salaried corporate job listing offering employee benefits (401k, healthcare, W2, salaried employment).
 5. "INFORMATIONAL": A blog article, tutorial, discussion, or news story with no buying intent.
 

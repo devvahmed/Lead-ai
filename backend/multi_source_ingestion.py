@@ -356,16 +356,18 @@ async def fetch_searxng_async(
                 continue
 
         # ── Multi-Engine Real Web Search Aggregator (Bing + Yahoo + Google + DDG) ──
+        # ── Multi-Engine Real Web Search Aggregator (Bing + DuckDuckGo Lite + Yahoo + Google) ──
         if not candidates:
             seen_domains = set()
 
-            # 1. Engine 1: Bing Live Search (with browser cookies & official form params)
+            # 1. Engine 1: Bing Live Search (Clean session cookies, no corrupting cc param)
             try:
                 logger.info(f"[Multi-Engine Search] Querying Bing Live Search for query='{query}' (page={page})")
                 bing_headers = {
                     "User-Agent": DEFAULT_USER_AGENT,
                     "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Cookie": "SRCHHPGUSR=SRCHLANG=en; _EDGE_S=mkt=en-us;"
                 }
                 # Initialize session with market set
                 await client.get("https://www.bing.com/?setmkt=en-US&setlang=en", headers=bing_headers)
@@ -375,20 +377,11 @@ async def fetch_searxng_async(
                     "form": "QBLH",
                     "first": first
                 }
-                country_to_cc = {
-                    "pakistan": "PK", "united states": "US", "usa": "US", "us": "US",
-                    "united kingdom": "GB", "uk": "GB", "canada": "CA", "australia": "AU",
-                    "germany": "DE", "france": "FR", "united arab emirates": "AE", "uae": "AE",
-                    "saudi arabia": "SA", "india": "IN", "singapore": "SG", "ireland": "IE",
-                    "netherlands": "NL", "spain": "ES", "italy": "IT", "switzerland": "CH"
-                }
-                cc_code = country_to_cc.get(country.lower().strip()) if country else ""
-                if cc_code:
-                    b_params["cc"] = cc_code
 
                 b_resp = await client.get("https://www.bing.com/search", params=b_params, headers=bing_headers)
                 if b_resp.status_code == 200:
                     matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
+                    bing_count = 0
                     for item in matches:
                         url = ""
                         m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
@@ -431,159 +424,108 @@ async def fetch_searxng_async(
                                 priority_rank=1,
                                 raw_metadata={"engine": "bing_live"}
                             ))
-                    if candidates:
-                        logger.info(f"[Multi-Engine Search] ✓ Bing fetched {len(candidates)} corporate candidates")
+                            bing_count += 1
+                    if bing_count:
+                        logger.info(f"[Multi-Engine Search] ✓ Bing fetched {bing_count} corporate candidates")
             except Exception as bing_err:
                 logger.debug(f"[Multi-Engine Search] Bing exception: {bing_err}")
 
-            # 2. Engine 2: Yahoo Live Organic Web Search
+            # 2. Engine 2: DuckDuckGo Lite (Fast, robust, always accessible HTML endpoint)
             try:
-                logger.info(f"[Multi-Engine Search] Querying Yahoo Organic Search for query='{query}' (page={page})")
-                b_offset = (page - 1) * 10 + 1
-                y_params = {"p": query, "b": b_offset}
-                y_headers = {
+                logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Lite for query='{query}' (page={page})")
+                s_offset = (page - 1) * 30
+                ddg_headers = {
                     "User-Agent": DEFAULT_USER_AGENT,
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    "Referer": "https://lite.duckduckgo.com/",
+                    "Content-Type": "application/x-www-form-urlencoded"
                 }
-                y_resp = await client.get("https://search.yahoo.com/search", params=y_params, headers=y_headers)
-                if y_resp.status_code == 200:
-                    algos = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</li>', y_resp.text, re.DOTALL)
-                    if not algos:
-                        algos = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</div>\s*</div>', y_resp.text, re.DOTALL)
-                    yahoo_added = 0
-                    for a_block in algos:
-                        m_u = re.search(r'href="https://r\.search\.yahoo\.com/[^"]*RU=([^/&"]+)/', a_block)
-                        if not m_u:
-                            continue
-                        y_target = urllib.parse.unquote(m_u.group(1))
-                        d = clean_domain_str(y_target)
-                        if y_target.startswith("http") and d and len(y_target) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
-                            seen_domains.add(d)
-                            m_t = re.search(r'<h3[^>]*><a[^>]*>(.*?)</a></h3>', a_block, re.DOTALL)
-                            if not m_t:
-                                m_t = re.search(r'<h3[^>]*>(.*?)</h3>', a_block, re.DOTALL)
-                            t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
-                            t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
-
-                            m_s = re.search(r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>(.*?)</div>', a_block, re.DOTALL)
-                            s = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
-                            s = html.unescape(s).replace('\u200e', '').replace('\u200f', '')
-
-                            candidates.append(RawLeadCandidate(
-                                source="searxng",
-                                title=t or d.split('.')[0].capitalize(),
-                                text_content=s or f"Commercial entity in target sector: {d}",
-                                url=y_target,
-                                author_or_company=extract_company_from_title(t) or d.split('.')[0].capitalize(),
-                                raw_domain=d,
-                                priority_rank=1,
-                                raw_metadata={"engine": "yahoo_live"}
-                            ))
-                            yahoo_added += 1
-                    if yahoo_added:
-                        logger.info(f"[Multi-Engine Search] ✓ Yahoo fetched {yahoo_added} additional corporate candidates")
-            except Exception as yahoo_err:
-                logger.debug(f"[Multi-Engine Search] Yahoo exception: {yahoo_err}")
-
-            # 3. Engine 3: Google Search (with safe delay gap as requested by user)
-            try:
-                # Safe gap of 2.0 seconds for Google
-                await asyncio.sleep(2.0)
-                logger.info(f"[Multi-Engine Search] Querying Google with safe gap for query='{query}'")
-                g_headers = {
-                    "User-Agent": DEFAULT_USER_AGENT,
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }
-                g_resp = await client.get(
-                    "https://www.google.com/search",
-                    params={"q": query, "hl": "en", "num": 10},
-                    headers=g_headers
+                ddg_resp = await client.post(
+                    "https://lite.duckduckgo.com/lite/",
+                    data={"q": query, "s": str(s_offset)},
+                    headers=ddg_headers,
+                    timeout=6.0
                 )
-                if g_resp.status_code == 200 and "sorry/index" not in g_resp.text:
-                    g_matches = re.findall(r'<a href="/url\?q=([^"&]+)&amp;[^"]*"', g_resp.text)
-                    google_added = 0
-                    for gm in g_matches:
-                        g_url = urllib.parse.unquote(gm)
-                        d = clean_domain_str(g_url)
-                        if g_url.startswith("http") and d and len(g_url) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
-                            seen_domains.add(d)
-                            candidates.append(RawLeadCandidate(
-                                source="searxng",
-                                title=d.split('.')[0].capitalize(),
-                                text_content=f"Verified business domain in sector: {d}",
-                                url=g_url,
-                                author_or_company=d.split('.')[0].capitalize(),
-                                raw_domain=d,
-                                priority_rank=1,
-                                raw_metadata={"engine": "google_live"}
-                            ))
-                            google_added += 1
-                    if google_added:
-                        logger.info(f"[Multi-Engine Search] ✓ Google fetched {google_added} candidates")
-            except Exception as google_err:
-                logger.debug(f"[Multi-Engine Search] Google exception: {google_err}")
-
-            # 4. Engine 4: DuckDuckGo Fallback (if total candidates < 6)
-            if len(candidates) < 6:
-                try:
-                    logger.info(f"[Multi-Engine Search] Querying DuckDuckGo fallback for query='{query}'")
-                    offset = (page - 1) * 25
-                    ddg_data = urllib.parse.urlencode({"q": query, "b": "", "kl": "", "s": str(offset)}).encode("utf-8")
-                    ddg_req = urllib.request.Request(
-                        "https://html.duckduckgo.com/html/",
-                        data=ddg_data,
-                        headers={
-                            "User-Agent": DEFAULT_USER_AGENT,
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "Referer": "https://html.duckduckgo.com/"
-                        },
-                        method="POST"
-                    )
-                    loop = asyncio.get_event_loop()
-                    def _do_ddg():
-                        try:
-                            with urllib.request.urlopen(ddg_req, timeout=5.0) as resp:
-                                if resp.status == 200:
-                                    return resp.read().decode("utf-8", errors="ignore")
-                        except Exception:
-                            return ""
-                        return ""
-
-                    ddg_html = await loop.run_in_executor(None, _do_ddg)
-                    if ddg_html:
-                        a_nodes = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', ddg_html)
-                        snippets = re.findall(r'class="result__snippet[^"]*"[^>]*>([\s\S]*?)</', ddg_html)
-                        if not a_nodes:
-                            raw_matches = re.findall(r'uddg=([^"&\s]+)', ddg_html)
-                            titles = re.findall(r'class="result__a"[^>]*>([\s\S]*?)</a>', ddg_html)
-                            for idx, raw_u in enumerate(raw_matches):
-                                a_nodes.append((raw_u, titles[idx] if idx < len(titles) else ""))
-
-                        for idx, (raw_url, raw_title) in enumerate(a_nodes[:20]):
-                            if 'uddg=' in raw_url:
-                                m = re.search(r'uddg=([^"&\s]+)', raw_url)
-                                if m:
-                                    raw_url = m.group(1)
-                            clean_u = urllib.parse.unquote(raw_url)
-                            clean_t = re.sub(r'<[^>]+>', '', raw_title).strip()
-                            snip = re.sub(r'<[^>]+>', '', snippets[idx]).strip() if idx < len(snippets) else ""
-                            d = clean_domain_str(clean_u)
-                            if clean_u.startswith("http") and d and len(clean_u) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
+                if ddg_resp.status_code == 200:
+                    soup = BeautifulSoup(ddg_resp.text, "html.parser")
+                    ddg_added = 0
+                    for a in soup.find_all("a", class_="result-link"):
+                        raw_href = a.get("href", "")
+                        if "uddg=" in raw_href:
+                            m = re.search(r'uddg=([^&]+)', raw_href)
+                            if m:
+                                raw_href = urllib.parse.unquote(m.group(1))
+                        if raw_href.startswith("http"):
+                            d = clean_domain_str(raw_href)
+                            if d and d not in GENERIC_PLATFORMS and d not in seen_domains:
                                 seen_domains.add(d)
+                                t = a.get_text().strip()
+                                t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
                                 candidates.append(RawLeadCandidate(
                                     source="searxng",
-                                    title=clean_t or d.split('.')[0].capitalize(),
-                                    text_content=snip or f"Commercial business site for {d}",
-                                    url=clean_u,
-                                    author_or_company=extract_company_from_title(clean_t) or d.split('.')[0].capitalize(),
+                                    title=t or d.split('.')[0].capitalize(),
+                                    text_content=f"Commercial operating business site for {d}",
+                                    url=raw_href,
+                                    author_or_company=extract_company_from_title(t) or d.split('.')[0].capitalize(),
                                     raw_domain=d,
                                     priority_rank=1,
-                                    raw_metadata={"engine": "duckduckgo_fallback"}
+                                    raw_metadata={"engine": "duckduckgo_lite"}
                                 ))
-                except Exception as ddg_err:
-                    logger.debug(f"[Multi-Engine Search] DDG fallback exception: {ddg_err}")
+                                ddg_added += 1
+                    if ddg_added:
+                        logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo Lite fetched {ddg_added} additional corporate candidates")
+            except Exception as ddg_err:
+                logger.debug(f"[Multi-Engine Search] DDG Lite exception: {ddg_err}")
+
+            # 3. Engine 3: Yahoo Live Organic Web Search (Fallback if candidates < 5)
+            if len(candidates) < 5:
+                try:
+                    logger.info(f"[Multi-Engine Search] Querying Yahoo Organic Search for query='{query}' (page={page})")
+                    b_offset = (page - 1) * 10 + 1
+                    y_params = {"p": query, "b": b_offset}
+                    y_headers = {
+                        "User-Agent": DEFAULT_USER_AGENT,
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    }
+                    y_resp = await client.get("https://search.yahoo.com/search", params=y_params, headers=y_headers, timeout=4.0)
+                    if y_resp.status_code == 200:
+                        algos = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</li>', y_resp.text, re.DOTALL)
+                        if not algos:
+                            algos = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</div>\s*</div>', y_resp.text, re.DOTALL)
+                        yahoo_added = 0
+                        for a_block in algos:
+                            m_u = re.search(r'href="https://r\.search\.yahoo\.com/[^"]*RU=([^/&"]+)/', a_block)
+                            if not m_u:
+                                continue
+                            y_target = urllib.parse.unquote(m_u.group(1))
+                            d = clean_domain_str(y_target)
+                            if y_target.startswith("http") and d and len(y_target) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
+                                seen_domains.add(d)
+                                m_t = re.search(r'<h3[^>]*><a[^>]*>(.*?)</a></h3>', a_block, re.DOTALL)
+                                if not m_t:
+                                    m_t = re.search(r'<h3[^>]*>(.*?)</h3>', a_block, re.DOTALL)
+                                t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
+                                t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
+
+                                m_s = re.search(r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>(.*?)</div>', a_block, re.DOTALL)
+                                s = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
+                                s = html.unescape(s).replace('\u200e', '').replace('\u200f', '')
+
+                                candidates.append(RawLeadCandidate(
+                                    source="searxng",
+                                    title=t or d.split('.')[0].capitalize(),
+                                    text_content=s or f"Commercial entity in target sector: {d}",
+                                    url=y_target,
+                                    author_or_company=extract_company_from_title(t) or d.split('.')[0].capitalize(),
+                                    raw_domain=d,
+                                    priority_rank=1,
+                                    raw_metadata={"engine": "yahoo_live"}
+                                ))
+                                yahoo_added += 1
+                        if yahoo_added:
+                            logger.info(f"[Multi-Engine Search] ✓ Yahoo fetched {yahoo_added} additional corporate candidates")
+                except Exception as yahoo_err:
+                    logger.debug(f"[Multi-Engine Search] Yahoo exception: {yahoo_err}")
 
     finally:
         if own_client:
