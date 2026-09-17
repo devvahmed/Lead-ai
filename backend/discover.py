@@ -9,7 +9,7 @@ import socket
 logger = logging.getLogger("discover")
 import urllib.request
 import urllib.parse
-from typing import AsyncIterator, List, Optional, Dict
+from typing import AsyncIterator, List, Optional, Dict, Tuple, Any, Set
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
