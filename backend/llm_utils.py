@@ -76,11 +76,23 @@ def _gemini_model() -> str:
     return os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 
+try:
+    from dotenv import load_dotenv
+    _env_file = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(_env_file):
+        load_dotenv(_env_file, override=False)
+    else:
+        load_dotenv()
+except Exception:
+    pass
+
 # --- Ollama probe cache -------------------------------------------------------
 
 _ollama_lock = threading.Lock()
 _ollama_last_check: float = 0.0
 _ollama_available: bool = False
+_ollama_active_model: str = ""
+_ollama_installed_models: list = []
 _OLLAMA_RECHECK_INTERVAL: float = 30.0   # seconds
 _OLLAMA_CONNECT_TIMEOUT: float = 3.0     # connect probe timeout
 
@@ -102,7 +114,7 @@ def _next_lb_index() -> int:
 # --- Tier 1: Ollama probe -----------------------------------------------------
 
 def _probe_ollama() -> bool:
-    global _ollama_last_check, _ollama_available
+    global _ollama_last_check, _ollama_available, _ollama_active_model, _ollama_installed_models
     now = time.monotonic()
     with _ollama_lock:
         if now - _ollama_last_check < _OLLAMA_RECHECK_INTERVAL:
@@ -117,6 +129,25 @@ def _probe_ollama() -> bool:
             )
             with urllib.request.urlopen(req, timeout=_OLLAMA_CONNECT_TIMEOUT) as r:
                 ok = r.status == 200
+                if ok:
+                    try:
+                        data = json.loads(r.read().decode("utf-8"))
+                        raw_models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+                        _ollama_installed_models = raw_models
+                        requested = _ollama_model().lower().strip()
+                        best_match = None
+                        for rm in raw_models:
+                            rm_clean = rm.lower()
+                            if rm_clean == requested or rm_clean.startswith(f"{requested}:"):
+                                best_match = rm
+                                break
+                        if not best_match and raw_models:
+                            llama_cands = [m for m in raw_models if "llama" in m.lower()]
+                            best_match = llama_cands[0] if llama_cands else raw_models[0]
+                            print(f"[Ollama Probe] ⚠️ Model '{requested}' not found. Automatically using installed model: '{best_match}'. Installed models: {raw_models}", flush=True)
+                        _ollama_active_model = best_match or requested
+                    except Exception:
+                        pass
         except Exception:
             ok = False
         _ollama_available = ok
@@ -139,7 +170,7 @@ def _call_ollama(
     global _ollama_last_check
     base = _ollama_base()
     endpoint = f"{base}/api/generate"
-    model = _ollama_model()
+    model = _ollama_active_model or _ollama_model()
     tag = f"[{domain_tag}] " if domain_tag else ""
 
     payload: dict = {
@@ -173,6 +204,17 @@ def _call_ollama(
             elapsed = time.time() - t0
             print(f"[Ollama] {tag}<- OK ({len(content)} chars, {elapsed:.1f}s)", flush=True)
             return content
+    except urllib.error.HTTPError as e:
+        err_body = ""
+        try:
+            err_body = e.read().decode("utf-8")[:250]
+        except Exception:
+            pass
+        elapsed = time.time() - t0
+        print(f"[Ollama] {tag}FAILED (HTTP {e.code}: {e.reason}, {elapsed:.1f}s) | Details: {err_body}", flush=True)
+        with _ollama_lock:
+            _ollama_last_check = 0.0
+        return None
     except Exception as e:
         elapsed = time.time() - t0
         print(f"[Ollama] {tag}FAILED ({type(e).__name__}: {e}, {elapsed:.1f}s)", flush=True)
