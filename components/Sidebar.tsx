@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 const navItems = [
   { href: '/', icon: 'dashboard', label: 'Dashboard' },
   { href: '/discover', icon: 'search_insights', label: 'Discover Companies' },
+  { href: '/automation', icon: 'smart_toy', label: 'Automation Hub' },
   { href: '/clients', icon: 'group', label: 'Clients' },
   { href: '/tasks', icon: 'assignment', label: 'Tasks' },
 ];

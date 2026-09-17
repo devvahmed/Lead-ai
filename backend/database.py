@@ -142,6 +142,43 @@ def init_db():
         )
     """)
 
+    # 24/7 Autonomous Lead Harvester State Table (Survives Server Reboots)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS automation_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER DEFAULT 1 UNIQUE,
+            status TEXT DEFAULT 'STOPPED',
+            target_service TEXT,
+            target_countries TEXT,
+            min_trust_score INTEGER DEFAULT 70,
+            total_leads_scanned INTEGER DEFAULT 0,
+            verified_emails_found INTEGER DEFAULT 0,
+            current_niche TEXT,
+            current_query TEXT,
+            csv_file_path TEXT,
+            started_at TEXT,
+            last_heartbeat TEXT
+        )
+    """)
+
+    # Automation Verified Leads Vault (Only Genuine Extracted Emails)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS automation_verified_leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER DEFAULT 1,
+            name TEXT NOT NULL,
+            website TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            email TEXT NOT NULL,
+            phone TEXT,
+            country TEXT,
+            industry TEXT,
+            trust_score INTEGER DEFAULT 70,
+            outreach_angle TEXT,
+            created_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -739,5 +776,199 @@ def get_keyword_run_count(company_id: int, keyword: str, country: str = "") -> i
         return row["cnt"] if row else 0
     finally:
         conn.close()
+
+
+# ─── 24/7 Automation & Live CSV Vault Helper Functions ───────────────────────
+
+def get_or_create_automation_job(company_id: int = 1) -> dict:
+    """Fetches current automation job state or initializes a default job for company."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        row = cursor.execute(
+            "SELECT * FROM automation_jobs WHERE company_id = ?",
+            (company_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+
+        # Create default stopped job
+        now_str = datetime.utcnow().isoformat()
+        cursor.execute("""
+            INSERT INTO automation_jobs (
+                company_id, status, target_service, target_countries,
+                min_trust_score, total_leads_scanned, verified_emails_found,
+                current_niche, current_query, started_at, last_heartbeat
+            ) VALUES (?, 'STOPPED', '', '["United States", "Pakistan", "United Kingdom", "Canada"]', 70, 0, 0, '', '', ?, ?)
+        """, (company_id, now_str, now_str))
+        conn.commit()
+        last_row = cursor.execute("SELECT * FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
+        return dict(last_row) if last_row else {}
+    finally:
+        conn.close()
+
+
+def update_automation_job(company_id: int = 1, **kwargs) -> dict:
+    """Dynamically updates fields for the company's automation job."""
+    if not kwargs:
+        return get_or_create_automation_job(company_id)
+
+    kwargs["last_heartbeat"] = datetime.utcnow().isoformat()
+    fields = []
+    values = []
+    for k, v in kwargs.items():
+        fields.append(f"{k} = ?")
+        values.append(v)
+    values.append(company_id)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            UPDATE automation_jobs
+            SET {', '.join(fields)}
+            WHERE company_id = ?
+        """, tuple(values))
+        conn.commit()
+        row = cursor.execute("SELECT * FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def get_active_automation_jobs() -> list:
+    """Returns all jobs marked RUNNING across companies (used on server reboot)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        rows = cursor.execute(
+            "SELECT * FROM automation_jobs WHERE status = 'RUNNING'"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]:
+    """
+    STRICT EMAIL GATEKEEPER:
+    Saves a newly discovered company ONLY if a genuine verified email was extracted.
+    Atomically:
+      1. Inserts into SQLite `automation_verified_leads`
+      2. Inserts into SQLite `clients` (for regular CRM display)
+      3. Appends row to live CSV file in `exports/` directory with immediate flush and fsync!
+    """
+    import csv
+
+    # STRICT GATE: Must have genuine email
+    email = (lead.get("email") or "").strip()
+    if not email or "@" not in email or "." not in email:
+        return None
+
+    name = (lead.get("name") or "Verified Company").strip()
+    website = (lead.get("website") or "").strip()
+    domain = (lead.get("domain") or "").strip()
+    phone = (lead.get("phone") or "").strip()
+    country = (lead.get("country") or "Global").strip()
+    industry = (lead.get("industry") or "B2B Operating Company").strip()
+    trust_score = int(lead.get("trustScore") or lead.get("evidenceScore") or 75)
+    outreach_angle = (lead.get("outreachAngle") or lead.get("matchReason") or "").strip()
+    now_str = datetime.utcnow().isoformat()
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check if email or domain was already verified for this company in automation
+        existing = cursor.execute("""
+            SELECT id FROM automation_verified_leads
+            WHERE company_id = ? AND (LOWER(email) = LOWER(?) OR (domain != '' AND LOWER(domain) = LOWER(?)))
+        """, (company_id, email, domain)).fetchone()
+
+        if existing:
+            return None
+
+        # 1. Insert into automation_verified_leads
+        cursor.execute("""
+            INSERT INTO automation_verified_leads (
+                company_id, name, website, domain, email, phone,
+                country, industry, trust_score, outreach_angle, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (company_id, name, website, domain, email, phone,
+              country, industry, trust_score, outreach_angle, now_str))
+        conn.commit()
+
+        # 2. Also save to regular clients table so user sees it in main CRM
+        save_client(
+            name=name,
+            website=website,
+            industry=industry,
+            country=country,
+            trust_score=trust_score,
+            relevance_reason=outreach_angle,
+            status="Pending",
+            email=email,
+            phone=phone,
+            company_id=company_id
+        )
+
+        # 3. Crash-proof live CSV append
+        exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+        os.makedirs(exports_dir, exist_ok=True)
+        csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
+
+        file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow([
+                    "Company Name", "Website", "Verified Email", "Phone",
+                    "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
+                ])
+            writer.writerow([
+                name, website, email, phone, country, industry, trust_score, outreach_angle, now_str
+            ])
+            f.flush()
+            os.fsync(f.fileno())
+
+        # Update CSV file path and verified_emails_found in automation_jobs
+        cursor.execute("""
+            UPDATE automation_jobs
+            SET verified_emails_found = verified_emails_found + 1,
+                csv_file_path = ?
+            WHERE company_id = ?
+        """, (csv_path, company_id))
+        conn.commit()
+
+        return {
+            "name": name,
+            "website": website,
+            "domain": domain,
+            "email": email,
+            "phone": phone,
+            "country": country,
+            "industry": industry,
+            "trustScore": trust_score,
+            "outreachAngle": outreach_angle,
+            "createdAt": now_str
+        }
+    finally:
+        conn.close()
+
+
+def get_recent_automation_leads(company_id: int = 1, limit: int = 20) -> list:
+    """Fetches recent genuine verified leads found by the autonomous harvester."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        rows = cursor.execute("""
+            SELECT * FROM automation_verified_leads
+            WHERE company_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (company_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
 
 

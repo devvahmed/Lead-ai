@@ -48,6 +48,14 @@ OUR_VALUE_PROP   = os.getenv("OUR_VALUE_PROPOSITION", "an intelligent CRM and le
 app = FastAPI(title="WTechX Leads & Email Outreach API")
 database.init_db()
 
+@app.on_event("startup")
+async def on_startup():
+    try:
+        import automation_engine
+        await automation_engine.resume_active_jobs_on_boot()
+    except Exception as e:
+        print(f"[Startup] Automation resume warning: {e}", flush=True)
+
 # ─── Auth Router Integration ──────────────────────────────────────────────────
 from auth_models import init_auth_db
 from auth_routes import router as auth_router, get_current_company, get_current_company_optional, Company
@@ -1530,3 +1538,67 @@ def send_real_email_endpoint(
 # ─── Include Discover Router ──────────────────────────────────────────────────
 from discover import discover_router
 app.include_router(discover_router)
+
+# ─── 24/7 Automation Daemon Endpoints ─────────────────────────────────────────
+from fastapi.responses import FileResponse
+
+class AutomationStartRequest(BaseModel):
+    target_service: Optional[str] = "B2B AI Services"
+    target_countries: Optional[List[str]] = ["United States", "Pakistan", "United Kingdom", "Canada"]
+    min_trust_score: Optional[int] = 70
+
+@app.post("/api/automation/start")
+async def api_start_automation(
+    req: AutomationStartRequest,
+    current_company: Company = Depends(get_current_company_optional)
+):
+    import automation_engine
+    job = await automation_engine.start_automation(
+        company_id=current_company.id,
+        target_service=req.target_service or "B2B Services",
+        target_countries=req.target_countries or ["United States", "Pakistan", "United Kingdom", "Canada"],
+        min_trust_score=req.min_trust_score or 70
+    )
+    return {"success": True, "job": job}
+
+@app.post("/api/automation/stop")
+async def api_stop_automation(
+    current_company: Company = Depends(get_current_company_optional)
+):
+    import automation_engine
+    job = await automation_engine.stop_automation(company_id=current_company.id)
+    return {"success": True, "job": job}
+
+@app.post("/api/automation/pause")
+async def api_pause_automation(
+    current_company: Company = Depends(get_current_company_optional)
+):
+    import automation_engine
+    job = await automation_engine.pause_automation(company_id=current_company.id)
+    return {"success": True, "job": job}
+
+@app.get("/api/automation/status")
+async def api_get_automation_status(
+    current_company: Company = Depends(get_current_company_optional)
+):
+    import automation_engine
+    status_data = automation_engine.get_automation_status(company_id=current_company.id)
+    return status_data
+
+@app.get("/api/automation/download-csv")
+async def api_download_automation_csv(
+    current_company: Company = Depends(get_current_company_optional)
+):
+    exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+    os.makedirs(exports_dir, exist_ok=True)
+    csv_path = os.path.join(exports_dir, f"leads_automation_company_{current_company.id}.csv")
+    if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            f.write("Company Name,Website,Verified Email,Phone,Country,Industry,Trust Score,Outreach Pitch Angle,Discovered At\n")
+
+    filename = f"verified_leads_{current_company.name.lower().replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return FileResponse(
+        path=csv_path,
+        media_type="text/csv",
+        filename=filename
+    )
