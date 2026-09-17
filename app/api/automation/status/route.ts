@@ -10,7 +10,13 @@ function getBackendUrl(): string {
 
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization') || req.headers.get('Authorization');
+    let authHeader = req.headers.get('authorization') || req.headers.get('Authorization');
+    if (!authHeader) {
+      const cookieToken = req.cookies.get('token')?.value;
+      if (cookieToken) {
+        authHeader = `Bearer ${cookieToken}`;
+      }
+    }
     const backendUrl = `${getBackendUrl()}/api/automation/status`;
 
     const res = await fetch(backendUrl, {

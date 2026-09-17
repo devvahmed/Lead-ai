@@ -10,7 +10,15 @@ function getBackendUrl(): string {
 
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization') || req.headers.get('Authorization');
+    let authHeader = req.headers.get('authorization') || req.headers.get('Authorization');
+    if (!authHeader) {
+      const cookieToken = req.cookies.get('token')?.value;
+      const paramToken = req.nextUrl.searchParams.get('auth');
+      const token = cookieToken || paramToken;
+      if (token) {
+        authHeader = `Bearer ${token}`;
+      }
+    }
     const backendUrl = `${getBackendUrl()}/api/automation/download-csv`;
 
     const res = await fetch(backendUrl, {

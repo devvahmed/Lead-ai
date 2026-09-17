@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import AutomationRadar3D from '@/components/automation/AutomationRadar3D';
+import { getAuthToken, getSavedCompany, CompanyProfile } from '@/lib/auth';
 
 interface AutomationStatusResponse {
   companyId: number;
@@ -49,6 +50,13 @@ export default function AutomationPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Logged-in Company Context
+  const [savedCompany, setSavedCompany] = useState<CompanyProfile | null>(null);
+  const [companyServicesList, setCompanyServicesList] = useState<string[]>([]);
+  const [dynamicPlaceholder, setDynamicPlaceholder] = useState(
+    'e.g. Custom AI Sales Assistants, ERP Solutions, Web Development...'
+  );
+
   // Form State
   const [serviceInput, setServiceInput] = useState('');
   const [selectedCountries, setSelectedCountries] = useState<string[]>([
@@ -59,10 +67,31 @@ export default function AutomationPage() {
   ]);
   const [minTrustScore, setMinTrustScore] = useState(70);
 
+  // On mount: load saved company to populate dynamic placeholder & default service
+  useEffect(() => {
+    const company = getSavedCompany();
+    if (company) {
+      setSavedCompany(company);
+      if (company.services) {
+        const parsed = company.services
+          .split(/[,;\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (parsed.length > 0) {
+          setCompanyServicesList(parsed);
+          setDynamicPlaceholder(`e.g. ${parsed.slice(0, 3).join(', ')}...`);
+          setServiceInput((prev) => (prev ? prev : parsed[0]));
+        }
+      } else if (company.industry) {
+        setDynamicPlaceholder(`e.g. ${company.industry} Solutions, Consulting, Automation...`);
+      }
+    }
+  }, []);
+
   // Fetch status on mount and poll
   const fetchStatus = async () => {
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = getAuthToken();
       const res = await fetch('/api/automation/status', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -107,7 +136,7 @@ export default function AutomationPage() {
     setErrorMsg('');
     setActionLoading(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = getAuthToken();
       const res = await fetch('/api/automation/start', {
         method: 'POST',
         headers: {
@@ -135,7 +164,7 @@ export default function AutomationPage() {
   const handleStop = async () => {
     setActionLoading(true);
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = getAuthToken();
       await fetch('/api/automation/stop', {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -149,8 +178,8 @@ export default function AutomationPage() {
   };
 
   const handleDownloadCSV = () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    window.open(`/api/automation/download-csv${token ? `?auth=${token}` : ''}`, '_blank');
+    const token = getAuthToken();
+    window.open(`/api/automation/download-csv${token ? `?auth=${encodeURIComponent(token)}` : ''}`, '_blank');
   };
 
   const isRunning = statusData?.status === 'RUNNING';
@@ -266,13 +295,25 @@ export default function AutomationPage() {
 
         {/* Configuration Card & Action Controls */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur-md space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-4 gap-2">
             <div>
-              <h2 className="text-lg font-bold text-white">Auto-Pilot Configuration</h2>
-              <p className="text-xs text-slate-400">
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-white">Auto-Pilot Configuration</h2>
+                {savedCompany?.name && (
+                  <span className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                    {savedCompany.name}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
                 Define the services you provide and target geographic markets. The autonomous engine handles niche rotation, multi-engine scraping, and email extraction.
               </p>
             </div>
+            {savedCompany?.industry && (
+              <div className="text-[11px] text-slate-400 bg-slate-800/60 px-3 py-1 rounded-lg border border-slate-700/50">
+                Industry: <span className="text-slate-200 font-semibold">{savedCompany.industry}</span>
+              </div>
+            )}
           </div>
 
           {errorMsg && (
@@ -284,17 +325,55 @@ export default function AutomationPage() {
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             {/* Service Input */}
             <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Your Service / Solution Offering
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  Your Service / Solution Offering
+                </label>
+                {savedCompany?.name && (
+                  <span className="text-[10px] text-emerald-400/90 font-mono">
+                    Tailored to {savedCompany.name}
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 disabled={isRunning}
                 value={serviceInput}
                 onChange={(e) => setServiceInput(e.target.value)}
-                placeholder="e.g. Custom AI Sales Assistants, ERP Solutions, Web Development..."
+                placeholder={dynamicPlaceholder}
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
               />
+
+              {/* Quick Select Chips from Company Services */}
+              {companyServicesList.length > 0 && (
+                <div className="pt-1 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+                    <span className="text-emerald-400">✦</span>
+                    <span>Quick Select from Your Offerings:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {companyServicesList.map((srv, idx) => {
+                      const isSelected = serviceInput.toLowerCase().trim() === srv.toLowerCase().trim();
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          disabled={isRunning}
+                          onClick={() => setServiceInput(srv)}
+                          className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/60 shadow-sm shadow-emerald-950'
+                              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 hover:text-white border border-slate-700/60'
+                          }`}
+                        >
+                          {srv}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <p className="text-[11px] text-slate-500">
                 AI uses this offering to dynamically hypothesize and find industries with active operational bottlenecks.
               </p>
