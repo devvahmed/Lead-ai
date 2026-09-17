@@ -1566,15 +1566,27 @@ async def stream_discovery(
     print(f"[Discover] Target Goal           : {target_count} Companies (both NEEDS_SERVICE + HAS_SIMILAR_SERVICE count)")
 
     qualified_total = 0
-    seen_domains: set = set()
+    # Pre-populate seen_domains with all previously discovered or saved clients for this company
+    import database
+    known_domains = database.get_known_domains(company_id=company_id)
+    seen_domains: set = set(known_domains)
+    print(f"[Discover] 🛡️ Cross-Session Deduplication Active: {len(seen_domains)} existing domains pre-excluded.")
+
     semaphore = asyncio.Semaphore(5)
     total_ollama = 0
     total_groq = 0
     total_raw = 0
     total_noise_passed = 0
 
-    variation_idx = 0
-    query_subpage = 1
+    # Advance query variation and subpage if this keyword & country were searched previously
+    prior_domain_count = database.get_keyword_run_count(company_id=company_id, keyword=clean_keyword, country=clean_country)
+    num_vars = len(query_variations) if query_variations else 1
+    variation_offset = (prior_domain_count // 3) % num_vars
+    subpage_offset = (prior_domain_count // (3 * num_vars))
+
+    variation_idx = variation_offset
+    query_subpage = 1 + subpage_offset
+    print(f"[Discover] 🔄 Query Rotation: Prior domains={prior_domain_count} → Starting variation_idx={variation_idx} ('{query_variations[variation_idx % num_vars]}'), start subpage={query_subpage}")
 
     for current_page in range(start_page, start_page + max_pages):
         if qualified_total >= target_count:
@@ -1930,7 +1942,7 @@ async def stream_discovery(
                     if not card_snippet or len(card_snippet) < 25:
                         card_snippet = reason[:280] if reason else f"{company_name} is a verified operating company in {clean_keyword}."
 
-                    from email_outreach import extract_regex_contacts
+                    from email_outreach import extract_regex_contacts, fetch_dedicated_contact_emails
                     scraped_text_for_contacts = scraped if scraped else f"{title} {snippet}"
                     contacts_extracted = extract_regex_contacts(scraped_text_for_contacts, url)
 
@@ -1940,6 +1952,20 @@ async def stream_discovery(
 
                     primary_email = found_emails[0] if found_emails else None
                     primary_phone = found_phones[0] if found_phones else None
+
+                    # If no email found on initial multi-page scrape, trigger deep contact probe across standard endpoints
+                    if not primary_email and not is_clients_mode:
+                        try:
+                            deep_contacts = await fetch_dedicated_contact_emails(url)
+                            if deep_contacts.get("emails"):
+                                found_emails = deep_contacts["emails"]
+                                primary_email = found_emails[0]
+                                print(f"[Deep Contact Probe] 🎯 Discovered email on {deep_contacts.get('contact_page')}: {primary_email}")
+                            if deep_contacts.get("phones") and not primary_phone:
+                                found_phones = deep_contacts["phones"]
+                                primary_phone = found_phones[0]
+                        except Exception as cp_err:
+                            logger.debug(f"[Deep Contact Probe] Error probing {url}: {cp_err}")
 
                     # ── Service-Agnostic Operational Bottleneck Audit Engine (Step 7) ──
                     try:
@@ -2103,6 +2129,18 @@ async def stream_discovery(
                 reason = res.get("matchReason", "")
                 source = res.get("source", "local-ollama")
 
+                if domain:
+                    seen_domains.add(domain)
+                    try:
+                        database.record_discovered_domains(
+                            company_id=company_id,
+                            domains=[domain],
+                            keyword=clean_keyword,
+                            country=clean_country
+                        )
+                    except Exception as rec_err:
+                        logger.debug(f"[Discover] Domain record error: {rec_err}")
+
                 source_tag = f"[{source.upper()} LLM]"
                 lead_label = "NEEDS_SERVICE ✦" if "needs_service" in lead_type.lower() else "HAS_SIMILAR_SERVICE ↑"
                 print(f"{source_tag} ✓ ACCEPTED [{lead_label}] {domain}: {reason} ({qualified_total}/{target_count})")
@@ -2112,11 +2150,12 @@ async def stream_discovery(
 
                 try:
                     from database import save_lead
+                    lead_email = res.get("email") or f"contact@{domain or 'company.com'}"
                     save_lead(
                         lead_id=res.get("id", f"lead-{time.time()}"),
                         name=company_name or "Unknown Company",
                         description=res.get("snippet", ""),
-                        email=f"contact@{domain or 'company.com'}",
+                        email=lead_email,
                         subject=f"Outreach opportunity for {company_name}",
                         sent_at=None,
                         action=reason or "AI Qualified Prospect",

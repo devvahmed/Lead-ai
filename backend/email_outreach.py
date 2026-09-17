@@ -183,14 +183,38 @@ def get_clean_page_name(raw_url: str) -> str:
         return "Website Page"
 
 
-def extract_regex_contacts(text: str, source_url: str = "") -> dict:
+def extract_regex_contacts(text: str, source_url: str = "", raw_html: str = "") -> dict:
     """
     100% programmatic contact extraction with precise source reference tracking.
     Deduplicates emails and combines source references across all crawled pages.
+    Supports raw HTML mailto links, JSON-LD schema blocks, and obfuscated formats.
     """
     raw_emails = EMAIL_RE.findall(text)
     raw_phones = PHONE_RE.findall(text)
     raw_linkedins = LINKEDIN_RE.findall(text)
+
+    combined_search_content = text + ("\n" + raw_html if raw_html else "")
+
+    # 1. Parse mailto: links from HTML/text
+    mailto_matches = re.findall(r'(?i)mailto:\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)', combined_search_content)
+    for m in mailto_matches:
+        raw_emails.append(m.split('?')[0].strip())
+
+    # 2. Parse JSON-LD blocks if HTML present
+    if raw_html:
+        for json_ld in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', raw_html, re.DOTALL | re.IGNORECASE):
+            for em in EMAIL_RE.findall(json_ld):
+                raw_emails.append(em)
+
+    # 3. Parse obfuscated patterns like info [at] domain.com or contact (at) domain.com
+    obfuscated = re.findall(r'\b([a-zA-Z0-9_.+-]+)\s*(?:\[at\]|\(at\)|\s+at\s+)\s*([a-zA-Z0-9-]+)\s*(?:\[dot\]|\(dot\)|\s+dot\s+|\.)\s*([a-zA-Z]{2,10})\b', combined_search_content, re.IGNORECASE)
+    for u, h, t in obfuscated:
+        raw_emails.append(f"{u}@{h}.{t}")
+
+    # 4. Parse tel: links
+    tel_matches = re.findall(r'(?i)tel:\s*([+0-9\s().-]{7,25})', combined_search_content)
+    for t in tel_matches:
+        raw_phones.append(t.strip())
 
     emails = []
     email_meta = []
@@ -421,11 +445,14 @@ async def fetch_raw_html(url: str) -> str:
     return await loop.run_in_executor(None, _fetch)
 
 
-def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 2) -> List[str]:
+def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 3) -> List[str]:
     """
     Extracts up to `max_links` same-domain sub-page URLs from a company's homepage HTML,
-    prioritizing links whose URL path or anchor text contains terms like:
-    'about', 'about-us', 'company', 'products', 'services', 'solutions', 'what-we-do', 'contact'.
+    strictly prioritizing:
+      1. Contact pages (e.g. /contact, /pages/contact-us, /contact-us, /support, /customer-service)
+      2. About / Company pages (e.g. /about, /about-us, /who-we-are)
+      3. Products / Services pages (e.g. /products, /services, /solutions)
+    Ensures contact pages are never crowded out by product catalogs.
     """
     if not homepage_url or not raw_html:
         return []
@@ -436,12 +463,14 @@ def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 2) 
         base_netloc = base_parsed.netloc.lower().replace("www.", "")
 
         soup = BeautifulSoup(raw_html, 'html.parser')
-        target_keywords = [
-            "about", "about-us", "company", "products", "services",
-            "solutions", "what-we-do", "contact", "contact-us", "who-we-are"
-        ]
+        contact_kws = ["contact", "contact-us", "contactus", "get-in-touch", "reach-us", "support", "customer-service", "help"]
+        about_kws = ["about", "about-us", "company", "who-we-are", "our-story"]
+        product_kws = ["products", "services", "solutions", "what-we-do", "collections"]
 
-        found_links = []
+        contact_candidates = []
+        about_candidates = []
+        product_candidates = []
+        other_candidates = []
         seen_urls = set()
 
         for a in soup.find_all('a', href=True):
@@ -470,23 +499,45 @@ def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 2) 
             if any(st in path_and_anchor for st in skip_terms):
                 continue
 
-            # Check if path or anchor text matches any target keyword
-            if any(kw in path_and_anchor for kw in target_keywords):
-                clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
-                if clean_target not in seen_urls and clean_target != homepage_url.rstrip('/'):
-                    seen_urls.add(clean_target)
-                    found_links.append(clean_target)
-                    if len(found_links) >= max_links:
-                        break
+            clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
+            if clean_target in seen_urls or clean_target == homepage_url.rstrip('/'):
+                continue
+            seen_urls.add(clean_target)
 
-        return found_links
+            if any(kw in path_and_anchor for kw in contact_kws):
+                contact_candidates.append(clean_target)
+            elif any(kw in path_and_anchor for kw in about_kws):
+                about_candidates.append(clean_target)
+            elif any(kw in path_and_anchor for kw in product_kws):
+                product_candidates.append(clean_target)
+            else:
+                other_candidates.append(clean_target)
+
+        # Balanced selection: prioritize contact, then about, then products
+        selected = []
+        if contact_candidates:
+            selected.append(contact_candidates[0])
+        if about_candidates and len(selected) < max_links:
+            selected.append(about_candidates[0])
+        if product_candidates and len(selected) < max_links:
+            selected.append(product_candidates[0])
+
+        # Fill remaining slots if any
+        remaining_pool = (contact_candidates[1:] + about_candidates[1:] + product_candidates[1:] + other_candidates)
+        for c in remaining_pool:
+            if len(selected) >= max_links:
+                break
+            if c not in selected:
+                selected.append(c)
+
+        return selected
     except Exception:
         return []
 
 
 async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tuple[str, str]:
     """
-    Fetches candidate homepage and concurrently fetches 1-2 sub-pages (About, Products, Services, Contact).
+    Fetches candidate homepage and concurrently fetches 2-3 prioritized sub-pages (Contact, About, Products).
     Combines contents into a rich evidence block and returns (combined_text, evidence_source_label).
     """
     # 1. Fetch raw HTML for homepage to extract text and sub-page links
@@ -496,13 +547,13 @@ async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tup
     if not homepage_text:
         return "", "none"
 
-    # 2. Discover 1-2 sub-pages (About, Products, Services, etc.)
-    subpage_urls = discover_subpage_urls(url, raw_html, max_links=2)
+    # 2. Discover prioritized sub-pages (Guaranteed Contact + About/Products)
+    subpage_urls = discover_subpage_urls(url, raw_html, max_links=3)
 
     if not subpage_urls:
         return homepage_text, "homepage only"
 
-    # 3. Concurrently fetch the 1-2 sub-pages with short timeout (3.0s max)
+    # 3. Concurrently fetch the sub-pages with short timeout (3.0s max)
     sub_results = await asyncio.gather(
         *[fetch_url_content(sub_url, timeout=3.0) for sub_url in subpage_urls],
         return_exceptions=True
@@ -513,17 +564,70 @@ async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tup
 
     for idx, sub_url in enumerate(subpage_urls):
         res = sub_results[idx]
-        if isinstance(res, str) and res.strip() and len(res.strip()) > 100:
+        if isinstance(res, str) and res.strip() and len(res.strip()) > 80:
             try:
                 from urllib.parse import urlparse
                 path_name = urlparse(sub_url).path or sub_url
             except Exception:
                 path_name = sub_url
             fetched_sources.append(path_name)
-            combined_text += f"\n\n--- SUBPAGE EVIDENCE ({path_name}) ---\n{res[:1000]}"
+            combined_text += f"\n\n--- SUBPAGE EVIDENCE ({path_name}) ---\n{res[:1200]}"
 
     source_label = " + ".join(fetched_sources)
     return combined_text, source_label
+
+
+async def fetch_dedicated_contact_emails(base_url: str) -> dict:
+    """
+    Dedicated fallback contact scraper:
+    Rapidly probes common corporate & e-commerce contact endpoints:
+    /pages/contact-us, /contact-us, /contact, /pages/contact, /about-us, /pages/about-us, /pages/customer-service, /support
+    and extracts emails and phone numbers concurrently.
+    """
+    from urllib.parse import urlparse
+    base = base_url.rstrip('/')
+    parsed = urlparse(base)
+    domain_root = f"{parsed.scheme}://{parsed.netloc}"
+
+    probe_paths = [
+        f"{domain_root}/pages/contact-us",
+        f"{domain_root}/contact-us",
+        f"{domain_root}/contact",
+        f"{domain_root}/pages/contact",
+        f"{domain_root}/pages/about-us",
+        f"{domain_root}/about-us",
+        f"{domain_root}/pages/customer-service",
+        f"{domain_root}/support"
+    ]
+
+    tasks = [fetch_url_content(p, timeout=2.5) for p in probe_paths]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_emails = []
+    all_phones = []
+    contact_page = None
+
+    for idx, res in enumerate(results):
+        if isinstance(res, str) and res.strip():
+            contacts = extract_regex_contacts(res, probe_paths[idx])
+            emails = contacts.get("emails", [])
+            phones = contacts.get("phones", [])
+            if emails:
+                all_emails.extend(emails)
+                if not contact_page:
+                    contact_page = probe_paths[idx]
+            if phones:
+                all_phones.extend(phones)
+
+    # Deduplicate preserving order
+    dedup_emails = list(dict.fromkeys(all_emails))
+    dedup_phones = list(dict.fromkeys(all_phones))
+
+    return {
+        "emails": dedup_emails,
+        "phones": dedup_phones,
+        "contact_page": contact_page
+    }
 
 # ─── Smart Internal Link Discovery ────────────────────────────────────────────
 _CONTACT_KEYWORDS = [

@@ -129,6 +129,19 @@ def init_db():
         )
     """)
 
+    # Discovered Domains History table for cross-run deduplication
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS discovered_domains_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER DEFAULT 1,
+            domain TEXT NOT NULL,
+            keyword TEXT,
+            country TEXT,
+            discovered_at TEXT,
+            UNIQUE(company_id, domain)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -640,4 +653,91 @@ def get_email_history(client_id: int, company_id: int = 1):
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_known_domains(company_id: int = 1) -> set:
+    """
+    Returns a set of normalized lower-case domain strings that are already known:
+    either saved as clients or previously discovered in search sessions.
+    """
+    from urllib.parse import urlparse
+    known = set()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. Existing clients
+        client_rows = cursor.execute(
+            "SELECT website FROM clients WHERE company_id = ? AND website IS NOT NULL",
+            (company_id,)
+        ).fetchall()
+        for r in client_rows:
+            w = (r["website"] or "").strip().lower()
+            if not w:
+                continue
+            if not w.startswith(("http://", "https://")):
+                w = "https://" + w
+            try:
+                dom = urlparse(w).netloc.lower().replace("www.", "")
+                if dom:
+                    known.add(dom)
+            except Exception:
+                pass
+
+        # 2. History of discovered domains
+        hist_rows = cursor.execute(
+            "SELECT domain FROM discovered_domains_history WHERE company_id = ?",
+            (company_id,)
+        ).fetchall()
+        for r in hist_rows:
+            d = (r["domain"] or "").strip().lower().replace("www.", "")
+            if d:
+                known.add(d)
+
+        return known
+    finally:
+        conn.close()
+
+
+def record_discovered_domains(company_id: int, domains: list, keyword: str = "", country: str = ""):
+    """
+    Persists discovered domains so subsequent searches avoid repeating them.
+    """
+    if not domains:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now_str = datetime.utcnow().isoformat()
+    try:
+        for d in domains:
+            clean_d = (d or "").strip().lower().replace("www.", "")
+            if not clean_d:
+                continue
+            cursor.execute("""
+                INSERT OR IGNORE INTO discovered_domains_history
+                (company_id, domain, keyword, country, discovered_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (company_id, clean_d, (keyword or "").strip(), (country or "").strip(), now_str))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_keyword_run_count(company_id: int, keyword: str, country: str = "") -> int:
+    """
+    Returns how many previously discovered domains exist for this keyword and country,
+    used to calculate query rotation index and search pagination offsets.
+    """
+    if not keyword:
+        return 0
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        row = cursor.execute("""
+            SELECT COUNT(*) as cnt FROM discovered_domains_history
+            WHERE company_id = ? AND LOWER(keyword) = LOWER(?)
+        """, (company_id, keyword.strip())).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
 
