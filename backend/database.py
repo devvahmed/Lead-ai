@@ -3,7 +3,9 @@ import os
 import json
 from datetime import datetime, timedelta
 
-DB_FILE = os.getenv("DATABASE_FILE", "clientplus_sales.db")
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_RAW_DB_FILE = os.getenv("DATABASE_FILE", "hyperlead_ai.db")
+DB_FILE = _RAW_DB_FILE if os.path.isabs(_RAW_DB_FILE) else os.path.join(_BASE_DIR, _RAW_DB_FILE)
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
