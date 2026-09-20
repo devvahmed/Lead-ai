@@ -1,0 +1,6 @@
+# ====================================================================
+# ClientPlus AI / Lead-AI - Root Python Requirements
+# (Points to backend dependencies for full application setup)
+# ====================================================================
+
+-r backend/requirements.txt

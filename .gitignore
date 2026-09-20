@@ -55,6 +55,7 @@ __pycache__/
 
 # runtime data files
 processed_domains.json
+backend/exports/
 
 # typescript
 *.tsbuildinfo

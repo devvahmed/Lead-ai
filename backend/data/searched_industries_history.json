@@ -1,21 +1,36 @@
 {
-  "last_updated": "2026-09-14T11:38:17.786457+00:00",
-  "total_scanned": 15,
+  "last_updated": "2026-09-17T15:25:29.667297+00:00",
+  "total_scanned": 53,
   "scanned_set": [
+    "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
     "automated inspection of composite layup in aerospace component manufacturing",
     "automated pcb inspection for lowvolume aerospace avionics",
     "automotive assembly line visual qc",
+    "automotive paint booth cleaning",
+    "automotive paint booth quality control",
     "automotive paint shop quality control",
     "automotive spare parts distributors",
+    "boutique commercial real estate brokerages",
+    "chemical hazardous materials storage",
     "cold storage warehouses",
+    "commercial hvac refrigeration service management",
     "commercial solar epc contractors",
+    "construction subcontractor field billing",
+    "dental practice management patient portals",
+    "directtoconsumer ecommerce brands",
     "ecommerce fulfillment centers",
     "fmcg defect detection sorting",
     "food processing line monitoring",
     "industrial equipment auctioneers",
+    "medical supplies hospital logistics",
+    "multilocation dental medical clinics",
     "pharmaceutical packaging inspection",
     "precision cnc machine shops",
+    "precision fruit harvesting in highdensity greenhouses",
+    "precision industrial manufacturing facilities",
+    "residential real estate brokerages",
+    "specialty freight dispatch brokering",
     "textile fabric quality control"
   ],
   "history": [
@@ -182,6 +197,424 @@
         "parent_industry": "Aerospace Manufacturing",
         "target_service_fit": "Computer vision AI for defect detection and robotics for precision pick‑and‑place, reducing rework and scrap costs in low‑volume avionics PCB production.",
         "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Precision Fruit Harvesting in High-Density Greenhouses",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T14:49:00.851321+00:00",
+      "metadata": {
+        "parent_industry": "Agriculture",
+        "target_service_fit": "Deploy autonomous navigation robots equipped with computer vision to identify ripe fruit, navigate tight aisles, and perform selective picking, reducing labor costs and harvest waste.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Chemical & Hazardous Materials Storage",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T14:49:26.452778+00:00",
+      "metadata": {
+        "parent_industry": "Industrial Chemicals & Distribution",
+        "target_service_fit": "Automated segregation enforcement, SDS compliance tracking, and container weight telematics",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Medical Supplies & Hospital Logistics",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T14:49:52.458681+00:00",
+      "metadata": {
+        "parent_industry": "Healthcare Supply Chain",
+        "target_service_fit": "Automated consignment inventory tracking, UDI compliance scanning, and sterility expiration management",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Specialty Freight Dispatch & Brokering",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T14:53:39.172162+00:00",
+      "metadata": {
+        "parent_industry": "Commercial Transportation",
+        "target_service_fit": "Custom mobile driver apps with proof-of-delivery capture, route telematics, and automated broker portals",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Commercial HVAC & Refrigeration Service Management",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T14:54:32.393194+00:00",
+      "metadata": {
+        "parent_industry": "Mechanical Contracting & Facility Services",
+        "target_service_fit": "Custom field service dispatch software, technician offline mobile diagnostic checklists, and customer portals",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Dental Practice Management & Patient Portals",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T14:57:34.278936+00:00",
+      "metadata": {
+        "parent_industry": "Multi-Location Healthcare Clinics",
+        "target_service_fit": "Custom multi-clinic patient onboarding, insurance pre-authorization workflows, and automated appointment rescheduling",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Construction Subcontractor Field Billing",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T14:58:03.605880+00:00",
+      "metadata": {
+        "parent_industry": "Commercial Construction",
+        "target_service_fit": "Custom mobile progress billing, daily field log verification, and change-order approval tracking",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Boutique Commercial Real Estate Brokerages",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:01:16.729495+00:00",
+      "metadata": {
+        "parent_industry": "Commercial Real Estate",
+        "target_service_fit": "Hyper-targeted outbound tenant acquisition, industrial property deal flow campaigns, and investor lead pipelines",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Direct-to-Consumer E-Commerce Brands",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:01:41.759614+00:00",
+      "metadata": {
+        "parent_industry": "E-Commerce & Online Retail",
+        "target_service_fit": "24/7 automated customer support, cart abandonment recovery, order tracking, and personalized product recommendations",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Multi-Location Dental & Medical Clinics",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:02:34.431781+00:00",
+      "metadata": {
+        "parent_industry": "Healthcare Clinics",
+        "target_service_fit": "24/7 patient appointment scheduling, service pricing FAQs, and intake qualification bots",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Agricultural Livestock Feedlot Monitoring",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:03:13.402370+00:00",
+      "metadata": {
+        "parent_industry": "Agriculture",
+        "target_service_fit": "Autonomous Navigation for monitoring and tracking livestock feedlots",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Residential Real Estate Brokerages",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:03:43.550344+00:00",
+      "metadata": {
+        "parent_industry": "Real Estate Agencies",
+        "target_service_fit": "Instant property inquiry handling, automated viewing bookings, and buyer budget pre-qualification",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:04:24.607048+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:05:17.616563+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:06:49.061260+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:07:12.697522+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:09:30.478982+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:09:54.026277+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:10:47.145465+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:11:19.957566+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:12:18.263361+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:13:50.564992+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:15:00.413495+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:16:19.883715+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Automotive Paint Booth Cleaning",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:16:44.987337+00:00",
+      "metadata": {
+        "parent_industry": "Manufacturing",
+        "target_service_fit": "Accurate computer vision for paint booth surface inspection and cleaning optimization",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:17:14.019860+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:17:35.917162+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:17:57.590953+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:18:18.837360+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:18:41.338694+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:19:04.570983+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:19:55.425110+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:20:23.836896+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:20:56.851276+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-17T15:21:18.668630+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Canada",
+      "scanned_at": "2026-09-17T15:21:39.865959+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Automotive Paint Booth Quality Control",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "United States",
+      "scanned_at": "2026-09-17T15:22:00.739476+00:00",
+      "metadata": {
+        "parent_industry": "Manufacturing",
+        "target_service_fit": "Real-time defect detection and sorting for improved paint booth efficiency",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "Autonomous Navigation & Computer Vision",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-17T15:25:29.667195+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
       }
     }
   ]
