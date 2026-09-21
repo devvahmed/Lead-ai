@@ -33,16 +33,100 @@ interface AutomationStatusResponse {
   }>;
 }
 
-const AVAILABLE_COUNTRIES = [
+interface CountryOption {
+  name: string;
+  code: string;
+  flag: string;
+  region: string;
+}
+
+const GLOBAL_COUNTRY_DATABASE: CountryOption[] = [
+  // North America
+  { name: 'United States', code: 'US', flag: '🇺🇸', region: 'North America' },
+  { name: 'Canada', code: 'CA', flag: '🇨🇦', region: 'North America' },
+  { name: 'Mexico', code: 'MX', flag: '🇲🇽', region: 'North America' },
+
+  // Europe
+  { name: 'United Kingdom', code: 'GB', flag: '🇬🇧', region: 'Europe' },
+  { name: 'Germany', code: 'DE', flag: '🇩🇪', region: 'Europe' },
+  { name: 'France', code: 'FR', flag: '🇫🇷', region: 'Europe' },
+  { name: 'Netherlands', code: 'NL', flag: '🇳🇱', region: 'Europe' },
+  { name: 'Ireland', code: 'IE', flag: '🇮🇪', region: 'Europe' },
+  { name: 'Switzerland', code: 'CH', flag: '🇨🇭', region: 'Europe' },
+  { name: 'Sweden', code: 'SE', flag: '🇸🇪', region: 'Europe' },
+  { name: 'Norway', code: 'NO', flag: '🇳🇴', region: 'Europe' },
+  { name: 'Denmark', code: 'DK', flag: '🇩🇰', region: 'Europe' },
+  { name: 'Spain', code: 'ES', flag: '🇪🇸', region: 'Europe' },
+  { name: 'Italy', code: 'IT', flag: '🇮🇹', region: 'Europe' },
+  { name: 'Belgium', code: 'BE', flag: '🇧🇪', region: 'Europe' },
+  { name: 'Austria', code: 'AT', flag: '🇦🇹', region: 'Europe' },
+  { name: 'Poland', code: 'PL', flag: '🇵🇱', region: 'Europe' },
+  { name: 'Finland', code: 'FI', flag: '🇫🇮', region: 'Europe' },
+  { name: 'Portugal', code: 'PT', flag: '🇵🇹', region: 'Europe' },
+
+  // Middle East & GCC
+  { name: 'United Arab Emirates', code: 'AE', flag: '🇦🇪', region: 'Middle East' },
+  { name: 'Saudi Arabia', code: 'SA', flag: '🇸🇦', region: 'Middle East' },
+  { name: 'Qatar', code: 'QA', flag: '🇶🇦', region: 'Middle East' },
+  { name: 'Kuwait', code: 'KW', flag: '🇰🇼', region: 'Middle East' },
+  { name: 'Bahrain', code: 'BH', flag: '🇧🇭', region: 'Middle East' },
+  { name: 'Oman', code: 'OM', flag: '🇴🇲', region: 'Middle East' },
+  { name: 'Turkey', code: 'TR', flag: '🇹🇷', region: 'Middle East' },
+
+  // Asia Pacific & South Asia
+  { name: 'Pakistan', code: 'PK', flag: '🇵🇰', region: 'Asia Pacific' },
+  { name: 'Australia', code: 'AU', flag: '🇦🇺', region: 'Asia Pacific' },
+  { name: 'Singapore', code: 'SG', flag: '🇸🇬', region: 'Asia Pacific' },
+  { name: 'New Zealand', code: 'NZ', flag: '🇳🇿', region: 'Asia Pacific' },
+  { name: 'Japan', code: 'JP', flag: '🇯🇵', region: 'Asia Pacific' },
+  { name: 'South Korea', code: 'KR', flag: '🇰🇷', region: 'Asia Pacific' },
+  { name: 'Malaysia', code: 'MY', flag: '🇲🇾', region: 'Asia Pacific' },
+  { name: 'Hong Kong', code: 'HK', flag: '🇭🇰', region: 'Asia Pacific' },
+  { name: 'India', code: 'IN', flag: '🇮🇳', region: 'Asia Pacific' },
+  { name: 'Indonesia', code: 'ID', flag: '🇮🇩', region: 'Asia Pacific' },
+  { name: 'Philippines', code: 'PH', flag: '🇵🇭', region: 'Asia Pacific' },
+  { name: 'Thailand', code: 'TH', flag: '🇹🇭', region: 'Asia Pacific' },
+  { name: 'Vietnam', code: 'VN', flag: '🇻🇳', region: 'Asia Pacific' },
+
+  // Americas & Africa
+  { name: 'Brazil', code: 'BR', flag: '🇧🇷', region: 'Americas' },
+  { name: 'South Africa', code: 'ZA', flag: '🇿🇦', region: 'Africa' },
+  { name: 'Egypt', code: 'EG', flag: '🇪🇬', region: 'MENA' },
+];
+
+const POPULAR_QUICK_COUNTRIES = [
   'United States',
-  'Pakistan',
   'United Kingdom',
+  'Pakistan',
+  'United Arab Emirates',
   'Canada',
+  'Saudi Arabia',
   'Germany',
   'Australia',
-  'United Arab Emirates',
-  'Saudi Arabia',
+  'Singapore',
+  'France',
+  'Netherlands',
+  'Qatar',
 ];
+
+const REGIONAL_PRESETS = [
+  { label: '🇺🇸 US & UK', countries: ['United States', 'United Kingdom'] },
+  { label: '🌎 North America', countries: ['United States', 'Canada'] },
+  { label: '🕌 GCC / Gulf', countries: ['United Arab Emirates', 'Saudi Arabia', 'Qatar'] },
+  { label: '🇵🇰 Pak & Gulf', countries: ['Pakistan', 'United Arab Emirates', 'Saudi Arabia'] },
+  { label: '🇪🇺 Western Europe', countries: ['United Kingdom', 'Germany', 'France', 'Netherlands'] },
+  { label: '🌏 Asia Hub', countries: ['Australia', 'Singapore', 'Japan', 'Pakistan'] },
+];
+
+function getCountryFlag(name: string): string {
+  const match = GLOBAL_COUNTRY_DATABASE.find(
+    (c) => c.name.toLowerCase() === name.toLowerCase()
+  );
+  return match?.flag || '🌐';
+}
+
+const MAX_COUNTRIES = 4;
+const MIN_COUNTRIES = 1;
 
 export default function AutomationPage() {
   const [statusData, setStatusData] = useState<AutomationStatusResponse | null>(null);
@@ -66,6 +150,10 @@ export default function AutomationPage() {
     'Canada',
   ]);
   const [minTrustScore, setMinTrustScore] = useState(70);
+
+  // Country Search & Picker State
+  const [countrySearchQuery, setCountrySearchQuery] = useState('');
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
 
   // On mount: load saved company to populate dynamic placeholder & default service
   useEffect(() => {
@@ -118,14 +206,63 @@ export default function AutomationPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const filteredCountries = GLOBAL_COUNTRY_DATABASE.filter(
+    (c) =>
+      c.name.toLowerCase().includes(countrySearchQuery.toLowerCase()) ||
+      c.region.toLowerCase().includes(countrySearchQuery.toLowerCase())
+  );
+
   const handleToggleCountry = (country: string) => {
     if (selectedCountries.includes(country)) {
-      if (selectedCountries.length > 1) {
-        setSelectedCountries(selectedCountries.filter((c) => c !== country));
+      if (selectedCountries.length <= MIN_COUNTRIES) {
+        setErrorMsg('At least 1 target country must remain selected.');
+        return;
       }
+      setErrorMsg('');
+      setSelectedCountries(selectedCountries.filter((c) => c !== country));
     } else {
+      if (selectedCountries.length >= MAX_COUNTRIES) {
+        setErrorMsg(
+          `Maximum ${MAX_COUNTRIES} countries allowed. Please remove one country before adding another.`
+        );
+        return;
+      }
+      setErrorMsg('');
       setSelectedCountries([...selectedCountries, country]);
     }
+  };
+
+  const handleRemoveCountry = (country: string) => {
+    if (selectedCountries.length <= MIN_COUNTRIES) {
+      setErrorMsg('At least 1 target country must remain selected.');
+      return;
+    }
+    setErrorMsg('');
+    setSelectedCountries(selectedCountries.filter((c) => c !== country));
+  };
+
+  const handleAddSearchedCountry = (country: string) => {
+    const clean = country.trim();
+    if (!clean) return;
+    if (selectedCountries.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      setErrorMsg(`${clean} is already selected.`);
+      return;
+    }
+    if (selectedCountries.length >= MAX_COUNTRIES) {
+      setErrorMsg(
+        `Maximum ${MAX_COUNTRIES} countries allowed. Please remove one before adding ${clean}.`
+      );
+      return;
+    }
+    setErrorMsg('');
+    setSelectedCountries([...selectedCountries, clean]);
+    setCountrySearchQuery('');
+    setIsCountryDropdownOpen(false);
+  };
+
+  const handleApplyPreset = (presetCountries: string[]) => {
+    setErrorMsg('');
+    setSelectedCountries(presetCountries.slice(0, MAX_COUNTRIES));
   };
 
   const handleStart = async () => {
@@ -404,32 +541,186 @@ export default function AutomationPage() {
               </div>
             </div>
 
-            {/* Target Countries Selector Chips */}
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Target Geographic Markets (Engine auto-rotates across selected)
-              </label>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {AVAILABLE_COUNTRIES.map((c) => {
-                  const isSelected = selectedCountries.includes(c);
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      disabled={isRunning}
-                      onClick={() => handleToggleCountry(c)}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${
-                        isSelected
-                          ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-300 shadow-sm'
-                          : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700'
-                      } disabled:opacity-60`}
-                    >
-                      {isSelected ? '✓ ' : '+ '}
-                      {c}
-                    </button>
-                  );
-                })}
+            {/* Dynamic Target Countries Management Deck */}
+            <div className="space-y-3 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                    Target Geographic Markets
+                  </label>
+                  <p className="text-[11px] text-slate-400">
+                    Select 1 to 4 countries of your choice. The autonomous harvester rotates across these markets continuously.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-mono font-bold border transition-all ${
+                      selectedCountries.length >= MAX_COUNTRIES
+                        ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+                        : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
+                    }`}
+                  >
+                    {selectedCountries.length} / {MAX_COUNTRIES} Selected
+                  </span>
+                </div>
               </div>
+
+              {/* Active Selected Countries Tags */}
+              <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-slate-800/90 bg-slate-950/80 shadow-inner">
+                <span className="text-xs font-medium text-slate-400 flex items-center gap-1 mr-1">
+                  <span className="text-emerald-400">🌐</span>
+                  Active Rotation:
+                </span>
+                {selectedCountries.map((c) => (
+                  <span
+                    key={c}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-300 shadow-sm shadow-emerald-950/50"
+                  >
+                    <span>{getCountryFlag(c)}</span>
+                    <span>{c}</span>
+                    {!isRunning && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCountry(c)}
+                        className="ml-1 rounded p-0.5 text-emerald-400/80 hover:bg-emerald-900/60 hover:text-emerald-100 transition-colors cursor-pointer"
+                        title="Remove country"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+
+              {/* Search & Custom Country Picker */}
+              {!isRunning && (
+                <div className="relative">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={countrySearchQuery}
+                        onChange={(e) => {
+                          setCountrySearchQuery(e.target.value);
+                          setIsCountryDropdownOpen(true);
+                        }}
+                        onFocus={() => setIsCountryDropdownOpen(true)}
+                        placeholder="🔍 Search or type any country in the world (e.g. Norway, Singapore, Japan, France, UAE...)"
+                        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      {countrySearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCountrySearchQuery('');
+                            setIsCountryDropdownOpen(false);
+                          }}
+                          className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Dropdown Menu */}
+                  {isCountryDropdownOpen && countrySearchQuery.trim() && (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900/95 p-1 shadow-2xl backdrop-blur-md">
+                      {filteredCountries.length > 0 ? (
+                        filteredCountries.map((c) => {
+                          const isAlreadySelected = selectedCountries.includes(c.name);
+                          return (
+                            <button
+                              key={c.code}
+                              type="button"
+                              onClick={() => {
+                                handleToggleCountry(c.name);
+                                setCountrySearchQuery('');
+                                setIsCountryDropdownOpen(false);
+                              }}
+                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors cursor-pointer ${
+                                isAlreadySelected
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : 'text-slate-200 hover:bg-slate-800'
+                              }`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span>{c.flag}</span>
+                                <span className="font-medium">{c.name}</span>
+                                <span className="text-[10px] text-slate-500">({c.region})</span>
+                              </span>
+                              <span className="font-mono text-[11px] text-slate-400">
+                                {isAlreadySelected ? '✓ Selected' : '+ Add'}
+                              </span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleAddSearchedCountry(countrySearchQuery)}
+                          className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-emerald-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                        >
+                          <span>Add custom country: "{countrySearchQuery.trim()}"</span>
+                          <span className="text-emerald-400 font-bold">+ Add</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 1-Click Regional Presets */}
+              {!isRunning && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-400">
+                    <span className="text-emerald-400">⚡</span>
+                    <span>1-Click Regional Presets:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {REGIONAL_PRESETS.map((preset, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleApplyPreset(preset.countries)}
+                        className="rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-xs font-medium text-slate-300 hover:border-slate-700 hover:bg-slate-800 hover:text-white transition-all cursor-pointer shadow-sm"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Popular Global Fast-Toggles */}
+              {!isRunning && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-[11px] font-medium text-slate-400">
+                    Popular Global Markets:
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_QUICK_COUNTRIES.map((c) => {
+                      const isSelected = selectedCountries.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          disabled={isRunning}
+                          onClick={() => handleToggleCountry(c)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-300 shadow-sm'
+                              : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                          } disabled:opacity-60`}
+                        >
+                          <span>{getCountryFlag(c)}</span> {c}
+                          <span className="ml-1 text-[10px] opacity-80">{isSelected ? '✓' : '+'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
