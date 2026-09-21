@@ -1543,8 +1543,8 @@ app.include_router(discover_router)
 from fastapi.responses import FileResponse
 
 class AutomationStartRequest(BaseModel):
-    target_service: Optional[str] = "B2B AI Services"
-    target_countries: Optional[List[str]] = ["United States", "Pakistan", "United Kingdom", "Canada"]
+    target_service: Optional[str] = None
+    target_countries: Optional[List[str]] = None
     min_trust_score: Optional[int] = 70
 
 @app.post("/api/automation/start")
@@ -1553,10 +1553,12 @@ async def api_start_automation(
     current_company: Company = Depends(get_current_company_optional)
 ):
     import automation_engine
+    target_countries = req.target_countries if req.target_countries is not None else []
+    target_service = (req.target_service or current_company.services or current_company.industry or "").strip()
     job = await automation_engine.start_automation(
         company_id=current_company.id,
-        target_service=req.target_service or "B2B Services",
-        target_countries=req.target_countries or ["United States", "Pakistan", "United Kingdom", "Canada"],
+        target_service=target_service,
+        target_countries=target_countries,
         min_trust_score=req.min_trust_score or 70
     )
     return {"success": True, "job": job}

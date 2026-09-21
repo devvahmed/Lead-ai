@@ -143,19 +143,19 @@ export default function AutomationPage() {
 
   // Form State
   const [serviceInput, setServiceInput] = useState('');
-  const [selectedCountries, setSelectedCountries] = useState<string[]>([
-    'United States',
-    'Pakistan',
-    'United Kingdom',
-    'Canada',
-  ]);
+  const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [minTrustScore, setMinTrustScore] = useState(70);
+
+  // Refs to prevent polling from overwriting user changes!
+  const hasUserEditedCountriesRef = useRef(false);
+  const hasUserEditedServiceRef = useRef(false);
+  const initialSyncDoneRef = useRef(false);
 
   // Country Search & Picker State
   const [countrySearchQuery, setCountrySearchQuery] = useState('');
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
 
-  // On mount: load saved company to populate dynamic placeholder & default service
+  // On mount: load saved company to populate dynamic placeholder
   useEffect(() => {
     const company = getSavedCompany();
     if (company) {
@@ -168,7 +168,6 @@ export default function AutomationPage() {
         if (parsed.length > 0) {
           setCompanyServicesList(parsed);
           setDynamicPlaceholder(`e.g. ${parsed.slice(0, 3).join(', ')}...`);
-          setServiceInput((prev) => (prev ? prev : parsed[0]));
         }
       } else if (company.industry) {
         setDynamicPlaceholder(`e.g. ${company.industry} Solutions, Consulting, Automation...`);
@@ -186,12 +185,44 @@ export default function AutomationPage() {
       if (res.ok) {
         const data: AutomationStatusResponse = await res.json();
         setStatusData(data);
-        if (data.targetService && !serviceInput) {
-          setServiceInput(data.targetService);
+
+        // Helper to detect legacy 4-country default
+        const isLegacyCountriesList = (list?: string[]) => {
+          if (!Array.isArray(list) || list.length !== 4) return false;
+          const lower = list.map((c) => c.toLowerCase());
+          return (
+            lower.includes('united states') &&
+            lower.includes('pakistan') &&
+            lower.includes('united kingdom') &&
+            lower.includes('canada')
+          );
+        };
+
+        const serverCountries =
+          Array.isArray(data.targetCountries) && !isLegacyCountriesList(data.targetCountries)
+            ? data.targetCountries
+            : [];
+
+        // ONLY on the very first mount/sync:
+        if (!initialSyncDoneRef.current) {
+          initialSyncDoneRef.current = true;
+          if (data.targetService && !hasUserEditedServiceRef.current && !serviceInput) {
+            setServiceInput(data.targetService);
+          }
+          if (serverCountries.length > 0 && !hasUserEditedCountriesRef.current) {
+            setSelectedCountries(serverCountries);
+          }
+        } else if (data.status === 'RUNNING') {
+          // If actively running on server, mirror the running configuration if user hasn't edited
+          if (data.targetService && !hasUserEditedServiceRef.current) {
+            setServiceInput(data.targetService);
+          }
+          if (serverCountries.length > 0 && !hasUserEditedCountriesRef.current) {
+            setSelectedCountries(serverCountries);
+          }
         }
-        if (data.targetCountries && data.targetCountries.length > 0) {
-          setSelectedCountries(data.targetCountries);
-        }
+        // When status is STOPPED or PAUSED: NEVER touch selectedCountries or serviceInput during polling!
+        // The user has complete control to add or remove countries.
       }
     } catch (err) {
       console.error('Failed to fetch status:', err);
@@ -213,13 +244,10 @@ export default function AutomationPage() {
   );
 
   const handleToggleCountry = (country: string) => {
+    hasUserEditedCountriesRef.current = true;
     if (selectedCountries.includes(country)) {
-      if (selectedCountries.length <= MIN_COUNTRIES) {
-        setErrorMsg('At least 1 target country must remain selected.');
-        return;
-      }
       setErrorMsg('');
-      setSelectedCountries(selectedCountries.filter((c) => c !== country));
+      setSelectedCountries((prev) => prev.filter((c) => c !== country));
     } else {
       if (selectedCountries.length >= MAX_COUNTRIES) {
         setErrorMsg(
@@ -228,20 +256,26 @@ export default function AutomationPage() {
         return;
       }
       setErrorMsg('');
-      setSelectedCountries([...selectedCountries, country]);
+      setSelectedCountries((prev) => [...prev, country]);
     }
   };
 
   const handleRemoveCountry = (country: string) => {
-    if (selectedCountries.length <= MIN_COUNTRIES) {
-      setErrorMsg('At least 1 target country must remain selected.');
-      return;
-    }
+    hasUserEditedCountriesRef.current = true;
     setErrorMsg('');
-    setSelectedCountries(selectedCountries.filter((c) => c !== country));
+    setSelectedCountries((prev) =>
+      prev.filter((c) => c.toLowerCase() !== country.toLowerCase())
+    );
+  };
+
+  const handleClearAllCountries = () => {
+    hasUserEditedCountriesRef.current = true;
+    setErrorMsg('');
+    setSelectedCountries([]);
   };
 
   const handleAddSearchedCountry = (country: string) => {
+    hasUserEditedCountriesRef.current = true;
     const clean = country.trim();
     if (!clean) return;
     if (selectedCountries.some((c) => c.toLowerCase() === clean.toLowerCase())) {
@@ -255,12 +289,13 @@ export default function AutomationPage() {
       return;
     }
     setErrorMsg('');
-    setSelectedCountries([...selectedCountries, clean]);
+    setSelectedCountries((prev) => [...prev, clean]);
     setCountrySearchQuery('');
     setIsCountryDropdownOpen(false);
   };
 
   const handleApplyPreset = (presetCountries: string[]) => {
+    hasUserEditedCountriesRef.current = true;
     setErrorMsg('');
     setSelectedCountries(presetCountries.slice(0, MAX_COUNTRIES));
   };
@@ -268,6 +303,10 @@ export default function AutomationPage() {
   const handleStart = async () => {
     if (!serviceInput.trim()) {
       setErrorMsg('Please specify your target service or offering before launching.');
+      return;
+    }
+    if (selectedCountries.length === 0) {
+      setErrorMsg('Please select at least 1 target country market before launching.');
       return;
     }
     setErrorMsg('');
@@ -476,7 +515,10 @@ export default function AutomationPage() {
                 type="text"
                 disabled={isRunning}
                 value={serviceInput}
-                onChange={(e) => setServiceInput(e.target.value)}
+                onChange={(e) => {
+                  hasUserEditedServiceRef.current = true;
+                  setServiceInput(e.target.value);
+                }}
                 placeholder={dynamicPlaceholder}
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
               />
@@ -496,7 +538,10 @@ export default function AutomationPage() {
                           key={idx}
                           type="button"
                           disabled={isRunning}
-                          onClick={() => setServiceInput(srv)}
+                          onClick={() => {
+                            hasUserEditedServiceRef.current = true;
+                            setServiceInput(srv);
+                          }}
                           className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all cursor-pointer ${
                             isSelected
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/60 shadow-sm shadow-emerald-950'
@@ -566,30 +611,45 @@ export default function AutomationPage() {
               </div>
 
               {/* Active Selected Countries Tags */}
-              <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-slate-800/90 bg-slate-950/80 shadow-inner">
+              <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-slate-800/90 bg-slate-950/80 shadow-inner min-h-[52px]">
                 <span className="text-xs font-medium text-slate-400 flex items-center gap-1 mr-1">
                   <span className="text-emerald-400">🌐</span>
                   Active Rotation:
                 </span>
-                {selectedCountries.map((c) => (
-                  <span
-                    key={c}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-300 shadow-sm shadow-emerald-950/50"
-                  >
-                    <span>{getCountryFlag(c)}</span>
-                    <span>{c}</span>
-                    {!isRunning && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCountry(c)}
-                        className="ml-1 rounded p-0.5 text-emerald-400/80 hover:bg-emerald-900/60 hover:text-emerald-100 transition-colors cursor-pointer"
-                        title="Remove country"
-                      >
-                        ✕
-                      </button>
-                    )}
+                {selectedCountries.length === 0 ? (
+                  <span className="text-xs text-slate-500 italic py-0.5">
+                    No countries selected yet. Pick 1 to 4 countries from presets below or search any country.
                   </span>
-                ))}
+                ) : (
+                  selectedCountries.map((c) => (
+                    <span
+                      key={c}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-300 shadow-sm shadow-emerald-950/50"
+                    >
+                      <span>{getCountryFlag(c)}</span>
+                      <span>{c}</span>
+                      {!isRunning && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCountry(c)}
+                          className="ml-1 rounded p-0.5 text-emerald-400/80 hover:bg-emerald-900/60 hover:text-emerald-100 transition-colors cursor-pointer"
+                          title={`Remove ${c}`}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </span>
+                  ))
+                )}
+                {!isRunning && selectedCountries.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllCountries}
+                    className="ml-auto text-[11px] text-slate-400 hover:text-red-400 underline transition-colors cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                )}
               </div>
 
               {/* Search & Custom Country Picker */}

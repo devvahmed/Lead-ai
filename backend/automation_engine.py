@@ -58,8 +58,8 @@ async def start_automation(
     """
     async with _get_lock(company_id):
         # Update SQLite state
-        clean_service = (target_service or "B2B Professional Services").strip()
-        countries_json = json.dumps(target_countries if target_countries else ["United States", "Pakistan", "United Kingdom", "Canada"])
+        clean_service = (target_service or "").strip()
+        countries_json = json.dumps(target_countries if target_countries is not None else [])
 
         job = database.update_automation_job(
             company_id=company_id,
@@ -125,7 +125,7 @@ def get_automation_status(company_id: int = 1) -> dict:
         raw_c = job.get("target_countries") or "[]"
         countries = json.loads(raw_c) if isinstance(raw_c, str) else raw_c
     except Exception:
-        countries = ["United States", "Pakistan", "United Kingdom", "Canada"]
+        countries = []
 
     return {
         "companyId": company_id,
@@ -164,7 +164,7 @@ async def resume_active_jobs_on_boot():
         try:
             countries = json.loads(raw_c) if isinstance(raw_c, str) else raw_c
         except Exception:
-            countries = ["United States", "Pakistan", "United Kingdom", "Canada"]
+            countries = []
         min_trust = job.get("min_trust_score", 70)
 
         # Launch worker
@@ -195,16 +195,25 @@ async def _autonomous_harvesting_daemon(company_id: int):
                 print(f"[Automation Daemon {company_id}] Job status is '{status}'. Exiting worker loop.", flush=True)
                 break
 
-            target_service = (job.get("target_service") or "B2B Digital Services").strip()
+            target_service = (job.get("target_service") or "").strip()
+            if not target_service:
+                try:
+                    comp = database.get_company(company_id)
+                    if comp:
+                        target_service = (comp.get("services") or comp.get("industry") or "").strip()
+                except Exception:
+                    pass
+            if not target_service:
+                target_service = "B2B Services"
             min_trust = int(job.get("min_trust_score") or 70)
             try:
                 raw_c = job.get("target_countries") or "[]"
                 countries = json.loads(raw_c) if isinstance(raw_c, str) else raw_c
             except Exception:
-                countries = ["United States", "Pakistan", "United Kingdom", "Canada"]
+                countries = []
 
             if not countries:
-                countries = ["United States", "Pakistan", "United Kingdom", "Canada"]
+                countries = ["Global"]
 
             # Rotate through target countries
             active_country = countries[country_idx % len(countries)]

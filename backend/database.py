@@ -183,6 +183,22 @@ def init_db():
         )
     """)
 
+    # Clean up legacy 4-country default array from previous versions
+    try:
+        cursor.execute("""
+            UPDATE automation_jobs 
+            SET target_countries = '[]' 
+            WHERE status != 'RUNNING'
+              AND (
+                target_countries LIKE '%United States%' 
+                AND target_countries LIKE '%Pakistan%' 
+                AND target_countries LIKE '%United Kingdom%' 
+                AND target_countries LIKE '%Canada%'
+              )
+        """)
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -803,7 +819,7 @@ def get_or_create_automation_job(company_id: int = 1) -> dict:
                 company_id, status, target_service, target_countries,
                 min_trust_score, total_leads_scanned, verified_emails_found,
                 current_niche, current_query, started_at, last_heartbeat
-            ) VALUES (?, 'STOPPED', '', '["United States", "Pakistan", "United Kingdom", "Canada"]', 70, 0, 0, '', '', ?, ?)
+            ) VALUES (?, 'STOPPED', '', '[]', 70, 0, 0, '', '', ?, ?)
         """, (company_id, now_str, now_str))
         conn.commit()
         last_row = cursor.execute("SELECT * FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
