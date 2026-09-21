@@ -353,6 +353,25 @@ export default function AutomationPage() {
     setShowCsvModal(false);
     setActionLoading(true);
     setErrorMsg('');
+
+    if (csvMode === 'new') {
+      // Optimistically wipe previous leads and reset telemetry in UI immediately
+      setStatusData((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'RUNNING',
+              totalLeadsScanned: 0,
+              verifiedEmailsFound: 0,
+              recentVerifiedLeads: [],
+              currentNiche: `Initiating ${serviceInput.trim()}...`,
+              currentQuery: 'Calibrating multi-source search engines...',
+              csvFilePath: '',
+            }
+          : prev
+      );
+    }
+
     try {
       const token = getAuthToken();
       const res = await fetch('/api/automation/start', {
@@ -834,16 +853,29 @@ export default function AutomationPage() {
           {/* Action Control Buttons */}
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-800/80 pt-4">
             {!isRunning ? (
-              <button
-                onClick={handleStart}
-                disabled={actionLoading}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-950/50 transition-all hover:opacity-95 disabled:opacity-50 cursor-pointer"
-              >
-                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                </svg>
-                {actionLoading ? 'Starting Engine...' : '🚀 Launch 24/7 Auto-Pilot'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => executeStart('new')}
+                  disabled={actionLoading || !serviceInput.trim() || selectedCountries.length === 0}
+                  className="flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-4 py-2.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-900/50 hover:text-white transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  title="Start a fresh dedicated CSV and reset leads stream for this niche"
+                >
+                  <span>✨</span>
+                  <span>Start Fresh Campaign</span>
+                </button>
+
+                <button
+                  onClick={handleStart}
+                  disabled={actionLoading}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-950/50 transition-all hover:opacity-95 disabled:opacity-50 cursor-pointer"
+                >
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                  {actionLoading ? 'Starting Engine...' : '🚀 Launch 24/7 Auto-Pilot'}
+                </button>
+              </div>
             ) : (
               <button
                 onClick={handleStop}
@@ -863,14 +895,26 @@ export default function AutomationPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
-              <h2 className="text-lg font-bold text-white">Live Verified Leads Stream</h2>
-              <p className="text-xs text-slate-400">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-lg font-bold text-white">Live Verified Leads Stream</h2>
+                {statusData?.recentVerifiedLeads && statusData.recentVerifiedLeads.length > 0 && (
+                  <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-mono font-bold text-emerald-300 border border-emerald-500/40">
+                    {statusData.recentVerifiedLeads.length} leads in active vault
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
                 Companies genuinely harvested with validated contact emails. Filtered through the Zero-Hallucination Gate.
               </p>
             </div>
-            <span className="rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
-              Auto-Appended to CSV
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-md border border-emerald-500/40 bg-emerald-950/40 px-2.5 py-1 text-xs font-mono text-emerald-300">
+                📄 {statusData?.csvFilePath ? statusData.csvFilePath.split(/[\/\\]/).pop() : 'Active Vault'}
+              </span>
+              <span className="rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
+                Live Auto-Appended
+              </span>
+            </div>
           </div>
 
           <div className="mt-4 overflow-x-auto">
@@ -922,11 +966,15 @@ export default function AutomationPage() {
                 </tbody>
               </table>
             ) : (
-              <div className="py-12 text-center text-slate-500">
-                <div className="text-3xl mb-2">📡</div>
-                <p className="text-sm">No verified leads collected yet in this run.</p>
-                <p className="text-xs text-slate-600 mt-1">
-                  Click &ldquo;Launch 24/7 Auto-Pilot&rdquo; above to start background harvesting.
+              <div className="py-12 text-center text-slate-500 space-y-2">
+                <div className="text-4xl">📡</div>
+                <p className="text-sm font-semibold text-slate-300">
+                  {isRunning ? 'Fresh Campaign Active: Harvesting genuine verified leads...' : 'Fresh Campaign Standby'}
+                </p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  {isRunning
+                    ? `Searching the web for ${serviceInput || 'your service'} across ${selectedCountries.join(', ') || 'target markets'}. Verified contact emails will stream here live as soon as discovered.`
+                    : 'Click "Launch 24/7 Auto-Pilot" or "Start Fresh Campaign" above to begin background harvesting.'}
                 </p>
               </div>
             )}

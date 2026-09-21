@@ -90,6 +90,8 @@ async def start_automation(
                 csv_file_path=new_csv_path,
                 verified_emails_found=0,
                 total_leads_scanned=0,
+                current_niche=f"Exploring {clean_service}...",
+                current_query="",
                 started_at=datetime.utcnow().isoformat()
             )
             print(f"[Automation Engine] 📁 Created NEW CSV file: '{new_csv_filename}' for company_id={company_id}", flush=True)
@@ -161,7 +163,8 @@ async def pause_automation(company_id: int) -> dict:
 def get_automation_status(company_id: int = 1) -> dict:
     """Returns comprehensive real-time status and telemetry for the UI."""
     job = database.get_or_create_automation_job(company_id)
-    recent_leads = database.get_recent_automation_leads(company_id, limit=12)
+    active_csv = job.get("csv_file_path")
+    recent_leads = database.get_recent_automation_leads(company_id, limit=20, csv_file_path=active_csv)
 
     # Check if in-memory task matches DB status
     task = _active_tasks.get(company_id)

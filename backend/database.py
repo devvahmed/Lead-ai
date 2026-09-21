@@ -182,6 +182,17 @@ def init_db():
             created_at TEXT
         )
     """)
+    _safe_add_column(cursor, "automation_verified_leads", "csv_file_path", "TEXT")
+
+    # Backfill any legacy verified leads to the company's active CSV path
+    try:
+        cursor.execute("""
+            UPDATE automation_verified_leads
+            SET csv_file_path = (SELECT csv_file_path FROM automation_jobs WHERE automation_jobs.company_id = automation_verified_leads.company_id)
+            WHERE csv_file_path IS NULL OR csv_file_path = ''
+        """)
+    except Exception:
+        pass
 
     # Clean up legacy 4-country default array from previous versions
     try:
@@ -898,23 +909,32 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # Check if email or domain was already verified for this company in automation
+        # Resolve active CSV file path from automation_jobs
+        exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+        os.makedirs(exports_dir, exist_ok=True)
+
+        job_row = cursor.execute("SELECT csv_file_path FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
+        csv_path = job_row["csv_file_path"] if (job_row and job_row["csv_file_path"]) else None
+        if not csv_path:
+            csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
+
+        # Check if email was already verified in THIS active CSV run
         existing = cursor.execute("""
             SELECT id FROM automation_verified_leads
-            WHERE company_id = ? AND (LOWER(email) = LOWER(?) OR (domain != '' AND LOWER(domain) = LOWER(?)))
-        """, (company_id, email, domain)).fetchone()
+            WHERE company_id = ? AND csv_file_path = ? AND LOWER(email) = LOWER(?)
+        """, (company_id, csv_path, email)).fetchone()
 
         if existing:
             return None
 
-        # 1. Insert into automation_verified_leads
+        # 1. Insert into automation_verified_leads with active csv_file_path
         cursor.execute("""
             INSERT INTO automation_verified_leads (
                 company_id, name, website, domain, email, phone,
-                country, industry, trust_score, outreach_angle, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                country, industry, trust_score, outreach_angle, created_at, csv_file_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (company_id, name, website, domain, email, phone,
-              country, industry, trust_score, outreach_angle, now_str))
+              country, industry, trust_score, outreach_angle, now_str, csv_path))
         conn.commit()
 
         # 2. Also save to regular clients table so user sees it in main CRM
@@ -932,14 +952,6 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
         )
 
         # 3. Crash-proof live CSV append to active CSV file
-        exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
-        os.makedirs(exports_dir, exist_ok=True)
-
-        job_row = cursor.execute("SELECT csv_file_path FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
-        csv_path = job_row["csv_file_path"] if (job_row and job_row["csv_file_path"]) else None
-        if not csv_path:
-            csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
-
         file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -979,18 +991,35 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
         conn.close()
 
 
-def get_recent_automation_leads(company_id: int = 1, limit: int = 20) -> list:
-    """Fetches recent genuine verified leads found by the autonomous harvester."""
+def get_recent_automation_leads(company_id: int = 1, limit: int = 20, csv_file_path: Optional[str] = None) -> list:
+    """
+    Fetches recent genuine verified leads found by the autonomous harvester.
+    Filters specifically by the active campaign's csv_file_path so a fresh run starts with a clean stream!
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        rows = cursor.execute("""
-            SELECT * FROM automation_verified_leads
-            WHERE company_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-        """, (company_id, limit)).fetchall()
-        return [dict(r) for r in rows]
+        if not csv_file_path:
+            job_row = cursor.execute("SELECT csv_file_path FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
+            if job_row and job_row["csv_file_path"]:
+                csv_file_path = job_row["csv_file_path"]
+
+        if csv_file_path:
+            rows = cursor.execute("""
+                SELECT * FROM automation_verified_leads
+                WHERE company_id = ? AND csv_file_path = ?
+                ORDER BY id DESC
+                LIMIT ?
+            """, (company_id, csv_file_path, limit)).fetchall()
+            return [dict(r) for r in rows]
+        else:
+            rows = cursor.execute("""
+                SELECT * FROM automation_verified_leads
+                WHERE company_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            """, (company_id, limit)).fetchall()
+            return [dict(r) for r in rows]
     finally:
         conn.close()
 
