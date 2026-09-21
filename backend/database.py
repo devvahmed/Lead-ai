@@ -360,19 +360,51 @@ def get_all_leads(company_id=None):
 def get_dashboard_stats(company_id: int):
     """
     Computes multi-tenant real-time dashboard statistics strictly isolated for company_id.
-    Queries clients table and email_history table.
+    Synchronizes manual discovery clients, 24/7 autonomous harvester telemetry,
+    email outreach history, and live CSV vaults.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # 1. Total Saved Clients
+        # 1. Total Saved Clients & Automated Harvested Leads
         clients_count = cursor.execute(
             "SELECT COUNT(*) FROM clients WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
 
-        total_companies_found = clients_count
+        harvested_count = cursor.execute(
+            "SELECT COUNT(*) FROM automation_verified_leads WHERE company_id = ?", (company_id,)
+        ).fetchone()[0]
 
-        # 2. Qualified Leads (Clients with generated emails OR status in Qualified/Contacted/In Negotiation/Won OR trust_score >= 80)
+        # Distinct total prospects across both sources
+        try:
+            total_distinct_row = cursor.execute("""
+                SELECT COUNT(DISTINCT LOWER(name)) FROM (
+                    SELECT name FROM clients WHERE company_id = ?
+                    UNION ALL
+                    SELECT name FROM automation_verified_leads WHERE company_id = ?
+                )
+            """, (company_id, company_id)).fetchone()
+            total_companies_found = total_distinct_row[0] if total_distinct_row else max(clients_count, harvested_count)
+        except Exception:
+            total_companies_found = max(clients_count, harvested_count)
+
+        # 2. Automation Daemon Telemetry & Job Status
+        job_row = cursor.execute("""
+            SELECT status, target_service, target_countries, total_leads_scanned,
+                   verified_emails_found, csv_file_path, current_niche, started_at
+            FROM automation_jobs WHERE company_id = ?
+        """, (company_id,)).fetchone()
+
+        automation_status = (job_row["status"] if job_row and job_row["status"] else "STOPPED").upper()
+        automation_service = job_row["target_service"] if job_row and job_row["target_service"] else ""
+        automation_countries = job_row["target_countries"] if job_row and job_row["target_countries"] else "[]"
+        total_leads_scanned = job_row["total_leads_scanned"] if job_row and job_row["total_leads_scanned"] else 0
+        verified_emails_found = job_row["verified_emails_found"] if job_row and job_row["verified_emails_found"] else harvested_count
+        csv_path = job_row["csv_file_path"] if job_row and job_row["csv_file_path"] else ""
+        active_vault_name = os.path.basename(csv_path) if csv_path else ""
+        current_niche = job_row["current_niche"] if job_row and job_row["current_niche"] else ""
+
+        # 3. Qualified Leads (Clients with generated emails OR status in Qualified/Contacted/In Negotiation/Won OR trust_score >= 80 + all verified automated leads)
         clients_with_emails = cursor.execute(
             "SELECT COUNT(DISTINCT client_id) FROM email_history WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
@@ -382,9 +414,9 @@ def get_dashboard_stats(company_id: int):
             WHERE company_id = ? AND (status IN ('Qualified', 'Contacted', 'In Negotiation', 'Won') OR trust_score >= 80)
         """, (company_id,)).fetchone()[0]
 
-        qualified_leads = max(clients_with_emails, qualified_status_count)
+        qualified_leads = max(clients_with_emails, qualified_status_count, harvested_count)
 
-        # 3. Active Outreach (Total emails generated + clients currently in Contacted/In Negotiation status)
+        # 4. Active Outreach (Total emails generated + clients currently in Contacted/In Negotiation status)
         total_emails_generated = cursor.execute(
             "SELECT COUNT(*) FROM email_history WHERE company_id = ?", (company_id,)
         ).fetchone()[0]
@@ -396,19 +428,41 @@ def get_dashboard_stats(company_id: int):
 
         active_outreach = max(total_emails_generated, contacted_clients_count)
 
-        # 4. Avg Trust Score across saved clients
-        avg_score_row = cursor.execute(
-            "SELECT AVG(trust_score) FROM clients WHERE company_id = ?", (company_id,)
-        ).fetchone()
+        # 5. Avg Trust Score across saved clients and automated verified leads
+        avg_score_row = cursor.execute("""
+            SELECT AVG(score) FROM (
+                SELECT trust_score AS score FROM clients WHERE company_id = ? AND trust_score > 0
+                UNION ALL
+                SELECT trust_score AS score FROM automation_verified_leads WHERE company_id = ? AND trust_score > 0
+            )
+        """, (company_id, company_id)).fetchone()
         
         if avg_score_row and avg_score_row[0] is not None and float(avg_score_row[0]) > 0:
             avg_trust_score = round(float(avg_score_row[0]), 1)
         else:
             avg_trust_score = 0.0
 
-        # 5. Dynamic Recent Activity Log (unified from email_history and clients)
+        # 6. Dynamic Recent Activity Log (unified from automation_verified_leads, email_history, and clients)
         activity_list = []
         
+        # Recent autonomous verified leads discovered
+        recent_harvested = cursor.execute("""
+            SELECT name, email, industry, country, trust_score, created_at
+            FROM automation_verified_leads
+            WHERE company_id = ?
+            ORDER BY id DESC LIMIT 5
+        """, (company_id,)).fetchall()
+
+        for h in recent_harvested:
+            activity_list.append({
+                "title": f"⚡ Auto-Harvested: {h['name']}",
+                "subtitle": f"{h['email']} · {h['industry'] or 'Operating Prospect'}",
+                "timestamp": h["created_at"] or datetime.utcnow().isoformat(),
+                "icon": "mark_email_read",
+                "type": "automation",
+                "probability_score": h["trust_score"]
+            })
+
         # Recent email events
         recent_emails = cursor.execute("""
             SELECT eh.label, eh.subject, eh.email_type, eh.created_at, c.name as client_name
@@ -431,25 +485,26 @@ def get_dashboard_stats(company_id: int):
 
         # Recent client saves
         recent_clients = cursor.execute("""
-            SELECT name, created_at, trust_score, status
+            SELECT name, created_at, trust_score, status, industry
             FROM clients WHERE company_id = ?
             ORDER BY id DESC LIMIT 5
         """, (company_id,)).fetchall()
 
         for c in recent_clients:
             activity_list.append({
-                "title": f"Prospect Saved: {c['name']}",
-                "subtitle": f"Fit Score: {c['trust_score']}% · Status: {c['status']}",
+                "title": f"Prospect Added: {c['name']}",
+                "subtitle": f"Fit Score: {c['trust_score']}% · {c['industry'] or c['status']}",
                 "timestamp": c["created_at"] or datetime.utcnow().isoformat(),
                 "icon": "corporate_fare",
-                "type": "saved"
+                "type": "saved",
+                "probability_score": c["trust_score"]
             })
 
         # Sort combined activities by timestamp DESC
         activity_list.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
-        recent_activity = activity_list[:6]
+        recent_activity = activity_list[:8]
 
-        # 6. Real Dynamic Weekly Chart Activity Data from email_history & clients for company_id
+        # 7. Real Dynamic Weekly Chart Activity Data
         w1_emails, w2_emails, w3_emails, w4_emails = 0, 0, 0, 0
         w1_calls, w2_calls, w3_calls, w4_calls = 0, 0, 0, 0
         w1_meetings, w2_meetings, w3_meetings, w4_meetings = 0, 0, 0, 0
@@ -523,6 +578,31 @@ def get_dashboard_stats(company_id: int):
                 elif cl_date >= week1_start:
                     w1_meetings += 1
 
+        # Also incorporate weekly harvested leads into calls/meetings pipeline telemetry
+        all_harvested_dates = cursor.execute("""
+            SELECT created_at FROM automation_verified_leads WHERE company_id = ?
+        """, (company_id,)).fetchall()
+        for h in all_harvested_dates:
+            ts_str = h["created_at"]
+            if not ts_str:
+                continue
+            try:
+                if "T" in str(ts_str):
+                    h_date = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00")).replace(tzinfo=None)
+                else:
+                    h_date = datetime.strptime(str(ts_str).split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                h_date = now
+
+            if h_date >= week4_start:
+                w4_calls += 1
+            elif h_date >= week3_start:
+                w3_calls += 1
+            elif h_date >= week2_start:
+                w2_calls += 1
+            elif h_date >= week1_start:
+                w1_calls += 1
+
         weekly_chart = [
             {"day": "Week 1", "emails": w1_emails, "calls": w1_calls, "meetings": w1_meetings},
             {"day": "Week 2", "emails": w2_emails, "calls": w2_calls, "meetings": w2_meetings},
@@ -533,10 +613,19 @@ def get_dashboard_stats(company_id: int):
         return {
             "company_id": company_id,
             "total_companies_found": total_companies_found,
+            "total_clients": clients_count,
+            "total_harvested_leads": harvested_count,
             "qualified_leads": qualified_leads,
             "active_outreach": active_outreach,
             "avg_trust_score": avg_trust_score,
             "total_emails_generated": total_emails_generated,
+            "automation_status": automation_status,
+            "automation_service": automation_service,
+            "automation_countries": automation_countries,
+            "active_vault_name": active_vault_name,
+            "total_leads_scanned": total_leads_scanned,
+            "verified_emails_found": verified_emails_found,
+            "current_niche": current_niche,
             "recent_activity": recent_activity,
             "weekly_chart": weekly_chart
         }

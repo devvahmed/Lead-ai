@@ -84,10 +84,19 @@ class DashboardStatsResponse(BaseModel):
     company_id: int
     company_name: str
     total_companies_found: int
+    total_clients: Optional[int] = 0
+    total_harvested_leads: Optional[int] = 0
     qualified_leads: int
     active_outreach: int
     avg_trust_score: float
     total_emails_generated: Optional[int] = 0
+    automation_status: Optional[str] = "STOPPED"
+    automation_service: Optional[str] = ""
+    automation_countries: Optional[str] = "[]"
+    active_vault_name: Optional[str] = ""
+    total_leads_scanned: Optional[int] = 0
+    verified_emails_found: Optional[int] = 0
+    current_niche: Optional[str] = ""
     recent_activity: List[Any] = []
     weekly_chart: List[Any] = []
 
