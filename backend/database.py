@@ -931,10 +931,14 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
             company_id=company_id
         )
 
-        # 3. Crash-proof live CSV append
+        # 3. Crash-proof live CSV append to active CSV file
         exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
         os.makedirs(exports_dir, exist_ok=True)
-        csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
+
+        job_row = cursor.execute("SELECT csv_file_path FROM automation_jobs WHERE company_id = ?", (company_id,)).fetchone()
+        csv_path = job_row["csv_file_path"] if (job_row and job_row["csv_file_path"]) else None
+        if not csv_path:
+            csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
 
         file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
         with open(csv_path, "a", newline="", encoding="utf-8") as f:

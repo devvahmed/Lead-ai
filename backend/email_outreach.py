@@ -1546,6 +1546,7 @@ class AutomationStartRequest(BaseModel):
     target_service: Optional[str] = None
     target_countries: Optional[List[str]] = None
     min_trust_score: Optional[int] = 70
+    csv_mode: Optional[str] = "append"
 
 @app.post("/api/automation/start")
 async def api_start_automation(
@@ -1559,7 +1560,8 @@ async def api_start_automation(
         company_id=current_company.id,
         target_service=target_service,
         target_countries=target_countries,
-        min_trust_score=req.min_trust_score or 70
+        min_trust_score=req.min_trust_score or 70,
+        csv_mode=req.csv_mode or "append"
     )
     return {"success": True, "job": job}
 
@@ -1593,12 +1595,21 @@ async def api_download_automation_csv(
 ):
     exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
     os.makedirs(exports_dir, exist_ok=True)
-    csv_path = os.path.join(exports_dir, f"leads_automation_company_{current_company.id}.csv")
+
+    job = database.get_or_create_automation_job(current_company.id)
+    csv_path = job.get("csv_file_path")
+
+    if not csv_path or not os.path.exists(csv_path):
+        csv_path = os.path.join(exports_dir, f"leads_automation_company_{current_company.id}.csv")
+
     if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             f.write("Company Name,Website,Verified Email,Phone,Country,Industry,Trust Score,Outreach Pitch Angle,Discovered At\n")
 
-    filename = f"verified_leads_{current_company.name.lower().replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = os.path.basename(csv_path)
+    if not filename.endswith(".csv"):
+        filename = f"verified_leads_{current_company.name.lower().replace(' ', '_')}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+
     return FileResponse(
         path=csv_path,
         media_type="text/csv",

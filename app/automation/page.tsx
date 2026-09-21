@@ -146,6 +146,9 @@ export default function AutomationPage() {
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [minTrustScore, setMinTrustScore] = useState(70);
 
+  // CSV Destination Decision Modal
+  const [showCsvModal, setShowCsvModal] = useState(false);
+
   // Refs to prevent polling from overwriting user changes!
   const hasUserEditedCountriesRef = useRef(false);
   const hasUserEditedServiceRef = useRef(false);
@@ -300,7 +303,7 @@ export default function AutomationPage() {
     setSelectedCountries(presetCountries.slice(0, MAX_COUNTRIES));
   };
 
-  const handleStart = async () => {
+  const handleStart = () => {
     if (!serviceInput.trim()) {
       setErrorMsg('Please specify your target service or offering before launching.');
       return;
@@ -310,7 +313,46 @@ export default function AutomationPage() {
       return;
     }
     setErrorMsg('');
+
+    // Previous run parameters from database status
+    const prevService = (statusData?.targetService || '').trim();
+    const prevCountries = (statusData?.targetCountries || [])
+      .map((c: string) => c.trim().toLowerCase())
+      .sort();
+
+    const currentService = serviceInput.trim();
+    const currentCountries = [...selectedCountries]
+      .map((c: string) => c.trim().toLowerCase())
+      .sort();
+
+    // Check if user changed service OR changed countries
+    const serviceChanged = Boolean(
+      prevService && prevService.toLowerCase() !== currentService.toLowerCase()
+    );
+    const countriesChanged = Boolean(
+      prevCountries.length > 0 &&
+      JSON.stringify(prevCountries) !== JSON.stringify(currentCountries)
+    );
+
+    // Check if previous run has any saved data / CSV
+    const hasPreviousRunData = Boolean(
+      (statusData?.verifiedEmailsFound || 0) > 0 ||
+      (statusData?.csvFilePath && statusData.csvFilePath.length > 0)
+    );
+
+    if (hasPreviousRunData && (serviceChanged || countriesChanged)) {
+      setShowCsvModal(true);
+      return;
+    }
+
+    // No changes or no previous data: proceed directly with append
+    executeStart('append');
+  };
+
+  const executeStart = async (csvMode: 'new' | 'append') => {
+    setShowCsvModal(false);
     setActionLoading(true);
+    setErrorMsg('');
     try {
       const token = getAuthToken();
       const res = await fetch('/api/automation/start', {
@@ -323,6 +365,7 @@ export default function AutomationPage() {
           target_service: serviceInput.trim(),
           target_countries: selectedCountries,
           min_trust_score: minTrustScore,
+          csv_mode: csvMode,
         }),
       });
       if (!res.ok) {
@@ -446,7 +489,11 @@ export default function AutomationPage() {
             <div className="mt-2 text-3xl font-extrabold text-emerald-300">
               {statusData?.verifiedEmailsFound?.toLocaleString() || 0}
             </div>
-            <div className="mt-1 text-xs text-emerald-500/80">100% genuine verified emails only</div>
+            <div className="mt-1 text-xs text-emerald-400/90 truncate" title={statusData?.csvFilePath || ''}>
+              {statusData?.csvFilePath
+                ? `📄 ${statusData.csvFilePath.split(/[\/\\]/).pop()}`
+                : '100% genuine verified emails only'}
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-md">
@@ -885,6 +932,137 @@ export default function AutomationPage() {
             )}
           </div>
         </div>
+
+        {/* ─── Target Configuration Change / CSV Lead Destination Modal ─── */}
+      {showCsvModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-xl rounded-2xl border border-slate-700/80 bg-[#0c1220] p-6 shadow-2xl shadow-emerald-950/40 text-slate-100">
+            {/* Top Close Button */}
+            <button
+              onClick={() => setShowCsvModal(false)}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+
+            {/* Header with Neon Icon */}
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/40 text-2xl shadow-inner shadow-emerald-500/20">
+                📁
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white tracking-tight">
+                  Campaign Configuration Changed
+                </h3>
+                <p className="text-xs text-emerald-400 font-medium">
+                  Choose Lead Destination / CSV File Preference
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-slate-300 leading-relaxed">
+              Aapne target <strong className="text-white">Service</strong> ya <strong className="text-white">Country Markets</strong> change ki hain. Nayi leads ko kahan save karna chahte hain?
+            </p>
+
+            {/* Comparison Box */}
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 text-xs">
+              <div className="space-y-1 border-b sm:border-b-0 sm:border-r border-slate-800/80 pb-2.5 sm:pb-0 sm:pr-3">
+                <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <span>⏮️ Previous Campaign</span>
+                </div>
+                <div className="text-slate-200 font-medium truncate" title={statusData?.targetService || 'N/A'}>
+                  <span className="text-slate-400">Service:</span> {statusData?.targetService || 'Previous Niche'}
+                </div>
+                <div className="text-slate-300 truncate" title={statusData?.targetCountries?.join(', ') || 'N/A'}>
+                  <span className="text-slate-400">Markets:</span> {statusData?.targetCountries?.join(', ') || 'N/A'}
+                </div>
+                <div className="text-[11px] text-emerald-400 font-mono">
+                  {statusData?.verifiedEmailsFound || 0} leads saved in current vault
+                </div>
+              </div>
+
+              <div className="space-y-1 sm:pl-1">
+                <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                  <span>✨ New Target</span>
+                </div>
+                <div className="text-emerald-300 font-semibold truncate" title={serviceInput}>
+                  <span className="text-slate-400">Service:</span> {serviceInput}
+                </div>
+                <div className="text-slate-200 truncate" title={selectedCountries.join(', ')}>
+                  <span className="text-slate-400">Markets:</span> {selectedCountries.join(', ')}
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono">
+                  Ready to stream verified leads
+                </div>
+              </div>
+            </div>
+
+            {/* Decision Cards */}
+            <div className="mt-5 space-y-3">
+              {/* Option 1: New CSV (Recommended) */}
+              <button
+                type="button"
+                onClick={() => executeStart('new')}
+                disabled={actionLoading}
+                className="group w-full flex items-start gap-3.5 rounded-xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 to-slate-900 p-4 text-left transition-all hover:border-emerald-400 hover:shadow-lg hover:shadow-emerald-950/50 cursor-pointer"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 text-lg group-hover:scale-110 transition-transform">
+                  🆕
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors">
+                      Start Fresh Dedicated CSV (Recommended)
+                    </span>
+                    <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/40">
+                      Clean & Isolated
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-300 leading-snug">
+                    Nayi campaign ke liye fresh CSV file banayein. Aapki purani leads mehfooz rahengi aur bilkul alag rahengi (no data mix-up).
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: Append to Existing CSV */}
+              <button
+                type="button"
+                onClick={() => executeStart('append')}
+                disabled={actionLoading}
+                className="group w-full flex items-start gap-3.5 rounded-xl border border-slate-700/80 bg-slate-900/60 p-4 text-left transition-all hover:border-slate-600 hover:bg-slate-800/80 cursor-pointer"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-slate-300 text-lg group-hover:scale-110 transition-transform">
+                  ➕
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-slate-200 group-hover:text-white transition-colors">
+                      Append to Existing CSV
+                    </span>
+                    <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                      Combined File
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400 leading-snug">
+                    Usi purani CSV file mein aage add karein. New leads purani leads ke sath ek hi file mein merge ho kar save hoti rahengi.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {/* Footer / Dismiss */}
+            <div className="mt-5 flex justify-end gap-2 border-t border-slate-800/80 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowCsvModal(false)}
+                className="rounded-xl px-4 py-2 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel / Modify Inputs
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

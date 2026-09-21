@@ -13,6 +13,8 @@ Features:
 
 from __future__ import annotations
 import os
+import re
+import csv
 import json
 import time
 import asyncio
@@ -50,25 +52,70 @@ async def start_automation(
     company_id: int,
     target_service: str,
     target_countries: List[str],
-    min_trust_score: int = 70
+    min_trust_score: int = 70,
+    csv_mode: str = "append"
 ) -> dict:
     """
     Launches or updates the 24/7 background autonomous harvester for the given company.
     Persists RUNNING status in SQLite so it auto-resumes if the server reboots.
+    Supports csv_mode='new' (starts fresh isolated CSV) or 'append' (continues existing).
     """
     async with _get_lock(company_id):
         # Update SQLite state
         clean_service = (target_service or "").strip()
         countries_json = json.dumps(target_countries if target_countries is not None else [])
 
-        job = database.update_automation_job(
-            company_id=company_id,
-            status="RUNNING",
-            target_service=clean_service,
-            target_countries=countries_json,
-            min_trust_score=min_trust_score,
-            started_at=datetime.utcnow().isoformat()
-        )
+        exports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+        os.makedirs(exports_dir, exist_ok=True)
+
+        if csv_mode == "new":
+            svc_slug = re.sub(r'[^a-zA-Z0-9]+', '_', clean_service.lower()).strip('_')[:28] or 'leads'
+            ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            new_csv_filename = f"leads_co{company_id}_{svc_slug}_{ts}.csv"
+            new_csv_path = os.path.join(exports_dir, new_csv_filename)
+
+            with open(new_csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "Company Name", "Website", "Verified Email", "Phone",
+                    "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
+                ])
+
+            job = database.update_automation_job(
+                company_id=company_id,
+                status="RUNNING",
+                target_service=clean_service,
+                target_countries=countries_json,
+                min_trust_score=min_trust_score,
+                csv_file_path=new_csv_path,
+                verified_emails_found=0,
+                total_leads_scanned=0,
+                started_at=datetime.utcnow().isoformat()
+            )
+            print(f"[Automation Engine] 📁 Created NEW CSV file: '{new_csv_filename}' for company_id={company_id}", flush=True)
+        else:
+            current_job = database.get_or_create_automation_job(company_id)
+            current_csv = current_job.get("csv_file_path")
+            if not current_csv or not os.path.exists(current_csv):
+                current_csv = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
+                if not os.path.exists(current_csv):
+                    with open(current_csv, "w", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerow([
+                            "Company Name", "Website", "Verified Email", "Phone",
+                            "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
+                        ])
+
+            job = database.update_automation_job(
+                company_id=company_id,
+                status="RUNNING",
+                target_service=clean_service,
+                target_countries=countries_json,
+                min_trust_score=min_trust_score,
+                csv_file_path=current_csv,
+                started_at=datetime.utcnow().isoformat()
+            )
+            print(f"[Automation Engine] ➕ Appending to existing CSV file: '{os.path.basename(current_csv)}' for company_id={company_id}", flush=True)
 
         # If a worker is already running for this company, let it pick up new config
         existing_task = _active_tasks.get(company_id)
