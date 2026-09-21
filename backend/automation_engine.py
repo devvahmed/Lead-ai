@@ -11,6 +11,7 @@ Features:
   - Real-Time Live CSV Writer: Immediate fsync to disk
 """
 
+from __future__ import annotations
 import os
 import json
 import time

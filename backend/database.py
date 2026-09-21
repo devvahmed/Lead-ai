@@ -1,7 +1,9 @@
+from __future__ import annotations
 import sqlite3
 import os
 import json
 from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _RAW_DB_FILE = os.getenv("DATABASE_FILE", "hyperlead_ai.db")
