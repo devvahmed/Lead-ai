@@ -995,6 +995,7 @@ def send_resend_email(to_email: str, subject: str, body_html: str) -> dict:
 
 # ─── /send-outreach ───────────────────────────────────────────────────────────
 @app.post("/send-outreach")
+async def send_outreach(data: OutreachRequest):
     prompt_email = f"""Write a personalized B2B cold outreach email.
 Target Company: {data.company_name}
 Target Context: {data.company_description}

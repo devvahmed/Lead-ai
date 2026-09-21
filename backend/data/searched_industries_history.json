@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-09-21T11:09:29.658879+00:00",
-  "total_scanned": 64,
+  "last_updated": "2026-09-21T11:20:08.610963+00:00",
+  "total_scanned": 71,
   "scanned_set": [
     "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
@@ -27,17 +27,24 @@
     "hightemperature insulation panel fabrication for petrochemical refineries",
     "hydrogen compression station component suppliers",
     "industrial 3d printing service providers for aerospace tooling",
+    "industrial boiler inspection certification services",
+    "industrial boiler inspection certification services for canadian power plants",
+    "industrial boiler water treatment chemical procurement for textile mills",
+    "industrial boiler water treatment chemical resupply for sugar refining plants",
     "industrial equipment auctioneers",
     "industrial robotics spare parts distribution for automotive assembly lines",
     "medical device precision injection moulding for catheter tip production",
     "medical supplies hospital logistics",
+    "modular data center power distribution unit pdu manufacturers",
     "multilocation dental medical clinics",
     "oilfield drill pipe replacement services",
     "pharmaceutical packaging inspection",
+    "precision cast iron valve manufacturing for water treatment plants",
     "precision cnc machine shops",
     "precision fruit harvesting in highdensity greenhouses",
     "precision industrial manufacturing facilities",
     "residential real estate brokerages",
+    "solar farm epc turnkey project procurement",
     "solar pv inverter predictive maintenance service providers",
     "specialty freight dispatch brokering",
     "textile dye house sodium hydrosulfite reagent resupply",
@@ -746,6 +753,83 @@
       "metadata": {
         "parent_industry": "Renewable Energy",
         "target_service_fit": "Our autonomous B2B lead generation system continuously identifies and qualifies inverter maintenance firms that meet the performance‑based contracts required by large‑scale solar farms, feeding sales teams with high‑intent prospects.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Inspection & Certification Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T11:12:21.081659+00:00",
+      "metadata": {
+        "parent_industry": "Energy & Utilities",
+        "target_service_fit": "Autonomous lead generation continuously identifies and engages plant operators, engineering firms, and compliance managers who need certified boiler inspections, shortening sales cycles and filling pipeline gaps.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Water Treatment Chemical Resupply for Sugar Refining Plants",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T11:13:16.732400+00:00",
+      "metadata": {
+        "parent_industry": "Food & Beverage Processing",
+        "target_service_fit": "Our autonomous lead generation continuously scouts and qualifies chemical manufacturers and distributors, delivering ready-to-engage supplier leads, cutting procurement cycle from weeks to days.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Cast Iron Valve Manufacturing for Water Treatment Plants",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T11:15:53.100095+00:00",
+      "metadata": {
+        "parent_industry": "Water Infrastructure",
+        "target_service_fit": "Automated B2B lead generation identifies qualified engineering firms and distributors needing high‑specification cast iron valves, shortening long procurement cycles and reducing reliance on manual supplier hunting.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Solar Farm EPC Turnkey Project Procurement",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T11:16:29.446244+00:00",
+      "metadata": {
+        "parent_industry": "Renewable Energy",
+        "target_service_fit": "Our autonomous B2B lead generation system continuously discovers and qualifies EPC contractors, module suppliers, and balance‑of‑system providers, delivering a pre‑qualified pipeline that shortens bid preparation time and reduces missed tender opportunities.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Inspection & Certification Services for Canadian Power Plants",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T11:18:02.009149+00:00",
+      "metadata": {
+        "parent_industry": "Energy & Utilities",
+        "target_service_fit": "Autonomous lead generation continuously identifies power plant operators approaching boiler inspection deadlines and matches them with certified inspection firms, delivering pre‑qualified, compliance‑driven prospects.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Water Treatment Chemical Procurement for Textile Mills",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T11:19:29.740115+00:00",
+      "metadata": {
+        "parent_industry": "Textile Manufacturing",
+        "target_service_fit": "Our autonomous B2B lead generation platform continuously identifies and qualifies chemical manufacturers and distributors, delivering high‑intent prospects to boiler treatment buyers, cutting down manual sourcing time and reducing plant downtime.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Modular Data Center Power Distribution Unit (PDU) Manufacturers",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T11:20:08.610869+00:00",
+      "metadata": {
+        "parent_industry": "Data Center Infrastructure",
+        "target_service_fit": "Our autonomous B2B lead generation platform continuously discovers, qualifies, and nurtures procurement contacts for modular PDU projects, delivering a steady pipeline of high‑value contracts and shortening the sales cycle.",
         "mode": "dynamic_industry"
       }
     }
