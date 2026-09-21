@@ -195,6 +195,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [emailCopied, setEmailCopied] = useState(false);
   const [pitchType, setPitchType] = useState<'targeted' | 'general'>('general');
   const [customKeyword, setCustomKeyword] = useState('');
+  const [emailRationale, setEmailRationale] = useState<string | null>(null);
 
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
@@ -383,9 +384,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         },
         body: JSON.stringify({
           company_name: client.name,
+          website: client.website,
           industry: client.industry,
           country: client.country,
           company_summary: client.relevance_reason || `${client.name} is a company operating in ${client.industry}.`,
+          fallback_context: client.contact_source_context || client.relevance_reason || '',
           matched_service: (pitchType === 'targeted' && (client.search_query || customKeyword)) 
             ? (client.search_query || customKeyword) 
             : (client.matched_service || ourServices || 'our B2B services'),
@@ -402,6 +405,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       const bdy = data.body || '';
       setEmailSubject(subj);
       setEmailBody(bdy);
+      setEmailRationale(data.internal_rationale || null);
       autoSaveToHistory('outreach', subj, bdy);
 
       // Step 2 Automation: Auto-update status to 'Contacted' so lead moves on Task Board
@@ -436,9 +440,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         },
         body: JSON.stringify({
           company_name: client.name,
+          website: client.website,
           industry: client.industry,
           country: client.country,
           company_summary: client.relevance_reason || `${client.name} is a company operating in ${client.industry}.`,
+          fallback_context: client.contact_source_context || client.relevance_reason || '',
           matched_service: (pitchType === 'targeted' && (client.search_query || customKeyword)) 
             ? (client.search_query || customKeyword) 
             : (client.matched_service || ourServices || 'our B2B services'),
@@ -453,6 +459,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       const bdy = data.body || '';
       setEmailSubject(subj);
       setEmailBody(bdy);
+      setEmailRationale(data.internal_rationale || null);
       autoSaveToHistory('followup', subj, bdy);
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : 'Follow-up email generation failed');
@@ -1289,6 +1296,19 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                           </div>
                         )}
                       </div>
+                      {/* AI Strategy Rationale Card */}
+                      {emailRationale && (
+                        <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 flex items-start gap-2.5 text-[12.5px] text-blue-900 animate-fadeIn shadow-2xs">
+                          <span className="material-symbols-outlined text-blue-600 text-[18px] shrink-0 mt-0.5">psychology</span>
+                          <div>
+                            <span className="font-bold uppercase tracking-wider text-[10.5px] text-blue-800 block mb-0.5">
+                              AI Strategic Angle Rationale:
+                            </span>
+                            <p className="text-blue-950 font-medium leading-snug">{emailRationale}</p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Subject Line */}
                       <div className="space-y-1.5">
                         <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 flex items-center justify-between">

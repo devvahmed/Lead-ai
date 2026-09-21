@@ -995,19 +995,18 @@ def send_resend_email(to_email: str, subject: str, body_html: str) -> dict:
 
 # ─── /send-outreach ───────────────────────────────────────────────────────────
 @app.post("/send-outreach")
-async def send_outreach(data: OutreachRequest):
     prompt_email = f"""Write a personalized B2B cold outreach email.
-Company: {data.company_name}
-Description: {data.company_description}
+Target Company: {data.company_name}
+Target Context: {data.company_description}
 Sender: {OUR_COMPANY_NAME} — {OUR_SERVICES}.
-Format: Start with "Subject: <catchy subject>", then HTML body (<p>, <br>, <strong> only).
-No markdown code blocks. Max 150 words. Sign off as {OUR_COMPANY_NAME} Outreach Team."""
+Format: Start with "Subject: <specific subject>", then natural plain text email body (strictly under 100 words).
+No HTML tags, no markdown code blocks, no generic fluff. Sign off as The {OUR_COMPANY_NAME} Team."""
     ai_response = call_ollama(prompt_email)
     if not ai_response:
-        raise HTTPException(status_code=500, detail="Failed to draft email via Ollama.")
+        raise HTTPException(status_code=500, detail="Failed to draft email via LLM.")
 
     lines = ai_response.split("\n")
-    subject = f"Outreach from {OUR_COMPANY_NAME}"
+    subject = f"Collaboration with {OUR_COMPANY_NAME}"
     body_lines = []
     for line in lines:
         if line.lower().startswith("subject:"):
@@ -1015,6 +1014,10 @@ No markdown code blocks. Max 150 words. Sign off as {OUR_COMPANY_NAME} Outreach 
         else:
             body_lines.append(line)
     body = "\n".join(body_lines).strip()
+    # Sanitize markdown/HTML leaks
+    body = re.sub(r'```[a-z]*\s*', '', body, flags=re.I)
+    body = re.sub(r'\s*```', '', body)
+    body = re.sub(r'<[^>]*>', '', body).strip()
 
     prompt_action = f"""Suggest the next sales action for {OUR_COMPANY_NAME} after sending outreach to {data.company_name}.
 Return only a single 1-sentence instruction. No greetings or markdown."""
