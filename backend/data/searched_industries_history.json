@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-09-17T15:25:29.667297+00:00",
-  "total_scanned": 53,
+  "last_updated": "2026-09-21T11:09:29.658879+00:00",
+  "total_scanned": 64,
   "scanned_set": [
     "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
@@ -17,21 +17,32 @@
     "commercial hvac refrigeration service management",
     "commercial solar epc contractors",
     "construction subcontractor field billing",
+    "custom cnc milling tooling for aerospace tier1 suppliers",
     "dental practice management patient portals",
+    "desalination plant reverse osmosis membrane replacement services",
     "directtoconsumer ecommerce brands",
     "ecommerce fulfillment centers",
     "fmcg defect detection sorting",
     "food processing line monitoring",
+    "hightemperature insulation panel fabrication for petrochemical refineries",
+    "hydrogen compression station component suppliers",
+    "industrial 3d printing service providers for aerospace tooling",
     "industrial equipment auctioneers",
+    "industrial robotics spare parts distribution for automotive assembly lines",
+    "medical device precision injection moulding for catheter tip production",
     "medical supplies hospital logistics",
     "multilocation dental medical clinics",
+    "oilfield drill pipe replacement services",
     "pharmaceutical packaging inspection",
     "precision cnc machine shops",
     "precision fruit harvesting in highdensity greenhouses",
     "precision industrial manufacturing facilities",
     "residential real estate brokerages",
+    "solar pv inverter predictive maintenance service providers",
     "specialty freight dispatch brokering",
-    "textile fabric quality control"
+    "textile dye house sodium hydrosulfite reagent resupply",
+    "textile fabric quality control",
+    "wind turbine gearbox precision gear manufacturing"
   ],
   "history": [
     {
@@ -614,6 +625,127 @@
       "metadata": {
         "parent_industry": "Advanced Manufacturing",
         "target_service_fit": "Process automation and digital transformation for Autonomous Navigation & Computer Vision",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Oilfield Drill Pipe Replacement Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T10:49:21.028578+00:00",
+      "metadata": {
+        "parent_industry": "Oil & Gas Services",
+        "target_service_fit": "Our autonomous B2B lead generation platform continuously scrapes project announcements, tender portals, and equipment logs to deliver pre‑qualified drill‑pipe manufacturers and service providers directly into the procurement team’s CRM, cutting lead‑time from weeks to days.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Custom CNC Milling Tooling for Aerospace Tier‑1 Suppliers",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T10:54:54.624988+00:00",
+      "metadata": {
+        "parent_industry": "Aerospace Manufacturing",
+        "target_service_fit": "Autonomous lead generation identifies and nurtures procurement engineers and program managers at Tier‑1 OEMs who need bespoke high‑precision tooling, shortening a traditionally manual supplier discovery process.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Wind Turbine Gearbox Precision Gear Manufacturing",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T10:55:32.256954+00:00",
+      "metadata": {
+        "parent_industry": "Renewable Energy Equipment Manufacturing",
+        "target_service_fit": "Our autonomous lead generation platform continuously identifies and engages OEMs, project developers, and maintenance firms seeking high‑precision gears, reducing the months‑long manual prospecting cycle.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Medical Device Precision Injection Moulding for Catheter Tip Production",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T10:56:17.590060+00:00",
+      "metadata": {
+        "parent_industry": "Medical Devices Manufacturing",
+        "target_service_fit": "Autonomous lead generation continuously scrapes OEM procurement portals, regulatory tender sites, and specialist forums to identify new catheter OEMs and contract manufacturers needing precision‑injection‑moulded components, auto‑qualifies them, and initiates multi‑channel outreach.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Desalination Plant Reverse Osmosis Membrane Replacement Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T10:57:14.237177+00:00",
+      "metadata": {
+        "parent_industry": "Water & Utilities",
+        "target_service_fit": "Our autonomous B2B lead generation system continuously identifies and qualifies desalination plant operators in Saudi Arabia who are approaching membrane life cycles, delivering ready-to-engage leads for membrane suppliers and service contractors.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Hydrogen Compression Station Component Suppliers",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T10:59:34.441151+00:00",
+      "metadata": {
+        "parent_industry": "Energy Infrastructure",
+        "target_service_fit": "Autonomous lead generation identifies and qualifies plant operators and EPC firms seeking compressors, valves, and control systems for new hydrogen refueling stations.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "High-Temperature Insulation Panel Fabrication for Petrochemical Refineries",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T11:02:00.040569+00:00",
+      "metadata": {
+        "parent_industry": "Petrochemical Manufacturing",
+        "target_service_fit": "Our autonomous B2B lead generation system continuously scans for qualified insulation panel manufacturers, validates certifications (e.g., ASTM, ISO), and auto‑qualifies them against the refinery’s material‑spec and turnaround‑time requirements, dramatically cutting sourcing cycle time and reducing costly downtime.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial 3D Printing Service Providers for Aerospace Tooling",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T11:02:52.922655+00:00",
+      "metadata": {
+        "parent_industry": "Additive Manufacturing",
+        "target_service_fit": "Automated identification and outreach to aerospace OEMs and Tier 1 suppliers needing low‑volume, high‑precision tooling, reducing sales cycle and manual prospecting effort.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Textile Dye House Sodium Hydrosulfite Reagent Resupply",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T11:04:45.978836+00:00",
+      "metadata": {
+        "parent_industry": "Textile Manufacturing",
+        "target_service_fit": "Autonomous B2B lead generation that continuously discovers, qualifies, and routes vetted chemical distributors to dye houses, cutting lead‑time for critical reagent procurement.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Robotics Spare Parts Distribution for Automotive Assembly Lines",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T11:05:35.791384+00:00",
+      "metadata": {
+        "parent_industry": "Industrial Automation",
+        "target_service_fit": "Autonomous lead generation identifies plant maintenance managers and procurement officers actively seeking replacement robot arms, grippers, and controllers, delivering pre‑qualified leads into the sales funnel.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Solar PV Inverter Predictive Maintenance Service Providers",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T11:09:29.658801+00:00",
+      "metadata": {
+        "parent_industry": "Renewable Energy",
+        "target_service_fit": "Our autonomous B2B lead generation system continuously identifies and qualifies inverter maintenance firms that meet the performance‑based contracts required by large‑scale solar farms, feeding sales teams with high‑intent prospects.",
         "mode": "dynamic_industry"
       }
     }

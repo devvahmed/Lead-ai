@@ -5,7 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Database path (anchored to absolute backend folder)
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_RAW_DB_NAME = os.getenv("DATABASE_FILE", "hyperlead_ai.db")
+_RAW_DB_NAME = os.getenv("DATABASE_FILE", "wtechx_ai.db")
 DEFAULT_DB_FILE = _RAW_DB_NAME if os.path.isabs(_RAW_DB_NAME) else os.path.join(_BASE_DIR, _RAW_DB_NAME)
 DB_PATH = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_FILE}")
 
