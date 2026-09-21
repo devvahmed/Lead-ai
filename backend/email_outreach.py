@@ -42,10 +42,10 @@ RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET", "whsec_T90sc5n4poC0/Q
 
 OUR_COMPANY_NAME = os.getenv("OUR_COMPANY_NAME", "WTechX")
 OUR_SERVICES     = os.getenv("OUR_SERVICES", "AI, Robotics, and Computer Vision solutions provider")
-OUR_PRODUCT_NAME = os.getenv("OUR_PRODUCT_NAME", "ClientPlus AI")
+OUR_PRODUCT_NAME = os.getenv("OUR_PRODUCT_NAME", "Lead-AI")
 OUR_VALUE_PROP   = os.getenv("OUR_VALUE_PROPOSITION", "an intelligent CRM and lead generation automation tool for B2B companies")
 
-app = FastAPI(title="WTechX Leads & Email Outreach API")
+app = FastAPI(title="Lead-AI Leads & Email Outreach API")
 database.init_db()
 
 @app.on_event("startup")

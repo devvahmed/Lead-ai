@@ -61,7 +61,7 @@ export default function LoginPage() {
           <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/25 mb-3">
             <span className="material-symbols-outlined text-[28px]">auto_awesome</span>
           </div>
-          <h1 className="text-2xl font-bold text-on-surface tracking-tight">ClientPlus AI</h1>
+          <h1 className="text-2xl font-bold text-on-surface tracking-tight">Lead-AI</h1>
           <p className="text-sm text-secondary mt-1">Sign in to your sales intelligence dashboard</p>
         </div>
 

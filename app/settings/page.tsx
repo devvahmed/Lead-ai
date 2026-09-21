@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-export const metadata: Metadata = { title: 'Settings — ClientPlus AI' };
+export const metadata: Metadata = { title: 'Settings — Lead-AI' };
 
 export default function SettingsPage() {
   return (

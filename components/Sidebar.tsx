@@ -38,7 +38,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           <span className="material-symbols-outlined icon-fill text-[20px]">analytics</span>
         </motion.div>
         <div>
-          <h1 className="font-bold text-[18px] leading-6 text-primary">ClientPlus AI</h1>
+          <h1 className="font-bold text-[18px] leading-6 text-primary">Lead-AI</h1>
           <p className="text-[11px] leading-4 tracking-wider uppercase text-secondary">Enterprise Plan</p>
         </div>
       </div>

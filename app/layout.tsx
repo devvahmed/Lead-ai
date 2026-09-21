@@ -11,9 +11,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ClientPlus AI — Enterprise Sales Dashboard",
+  title: "Lead-AI — Enterprise Sales Dashboard",
   description: "AI-powered B2B sales intelligence platform. Discover companies, manage clients, and close deals faster.",
-  keywords: ["CRM", "sales", "AI", "B2B", "leads", "outreach"],
+  keywords: ["CRM", "sales", "AI", "B2B", "leads", "outreach", "Lead-AI"],
 };
 
 export default function RootLayout({

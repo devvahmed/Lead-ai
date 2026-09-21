@@ -1,4 +1,4 @@
-# 🚀 Lead-AI (ClientPlus AI) — Autonomous B2B Sales & Lead Generation Platform
+# 🚀 Lead-AI — Autonomous B2B Sales & Lead Generation Platform
 
 [![Next.js 16](https://img.shields.io/badge/Frontend-Next.js%2016%20(React%2019)-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20(Python%203.10+)-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)

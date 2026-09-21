@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ========================================================
-echo   ClientPlus AI - Automated Project Setup & Install
+echo   Lead-AI - Automated Project Setup & Install
 echo ========================================================
 echo.
 

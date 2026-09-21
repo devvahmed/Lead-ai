@@ -1,6 +1,6 @@
-# ClientPlus AI - Automated PowerShell Setup Script
+# Lead-AI - Automated PowerShell Setup Script
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "  ClientPlus AI - Automated Project Setup & Install     " -ForegroundColor Green
+Write-Host "  Lead-AI - Automated Project Setup & Install     " -ForegroundColor Green
 Write-Host "========================================================" -ForegroundColor Cyan
 
 # 1. Check Python

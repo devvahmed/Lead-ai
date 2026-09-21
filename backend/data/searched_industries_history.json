@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-09-21T12:02:51.593259+00:00",
-  "total_scanned": 80,
+  "last_updated": "2026-09-21T14:10:25.310334+00:00",
+  "total_scanned": 117,
   "scanned_set": [
     "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
@@ -32,6 +32,8 @@
     "industrial 3d printing service providers for aerospace tooling",
     "industrial boiler inspection certification services",
     "industrial boiler inspection certification services for canadian power plants",
+    "industrial boiler maintenance for food processing plants",
+    "industrial boiler water chemistry monitoring services",
     "industrial boiler water treatment chemical procurement for textile mills",
     "industrial boiler water treatment chemical resupply for sugar refining plants",
     "industrial equipment auctioneers",
@@ -43,7 +45,9 @@
     "offshore platform corrosion monitoring sensor providers",
     "offshore platform mechanical seal spare parts procurement",
     "oilfield drill pipe replacement services",
+    "pharmaceutical cold chain logistics for temperaturesensitive vaccines",
     "pharmaceutical packaging inspection",
+    "precision agricultural drone maintenance services",
     "precision cast iron valve manufacturing for water treatment plants",
     "precision cnc machine shops",
     "precision fruit harvesting in highdensity greenhouses",
@@ -936,6 +940,413 @@
       "metadata": {
         "parent_industry": "Oil & Gas Services",
         "target_service_fit": "Autonomous B2B lead generation identifies and qualifies maintenance contractors and asset managers seeking corrosion monitoring solutions, reducing sales cycle time and expanding market reach.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Water Chemistry Monitoring Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T13:43:44.882080+00:00",
+      "metadata": {
+        "parent_industry": "Power Generation & Utilities",
+        "target_service_fit": "Autonomous lead generation to identify plant operators and maintenance managers needing water chemistry monitoring, delivering qualified prospects and shortening the sales cycle.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Industrial Boiler Maintenance for Food Processing Plants",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T13:45:43.036009+00:00",
+      "metadata": {
+        "parent_industry": "Industrial Services",
+        "target_service_fit": "Autonomous lead generation continuously identifies and qualifies plant managers and maintenance engineers seeking reliable boiler service contracts, automates outreach, and feeds a qualified pipeline to reduce the long procurement cycle.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T13:48:23.468479+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T13:48:46.261258+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T13:49:12.286397+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T13:50:32.568487+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T13:51:27.286255+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T13:51:57.954499+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T13:52:40.285421+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Agricultural Drone Maintenance Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T13:53:09.215515+00:00",
+      "metadata": {
+        "parent_industry": "Agricultural Technology",
+        "target_service_fit": "Autonomous lead generation identifies farms and agribusinesses with active drone fleets, schedules maintenance contracts, and fills pipeline without manual prospecting.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T13:55:26.152201+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T13:56:41.726908+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T13:57:28.755594+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T13:57:55.123824+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T13:58:10.342604+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T13:58:50.415740+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T13:59:21.710112+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T13:59:42.884169+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T14:00:04.102991+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T14:00:24.454846+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T14:00:47.887950+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T14:01:09.249067+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T14:01:32.373696+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T14:02:20.921683+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T14:02:48.475407+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T14:03:26.144652+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T14:04:01.179450+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T14:04:33.430004+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T14:05:12.026746+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T14:05:48.845558+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T14:06:15.113783+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T14:06:45.129652+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T14:07:23.774531+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T14:08:00.805160+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Pharmaceutical Cold Chain Logistics for Temperature-Sensitive Vaccines",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T14:08:35.563262+00:00",
+      "metadata": {
+        "parent_industry": "Cold Chain Logistics",
+        "target_service_fit": "Our autonomous B2B lead generation system can continuously identify and qualify new pharma manufacturers, vaccine distributors, and logistics providers needing temperature-controlled transport, delivering high-intent leads directly to sales teams.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T14:09:46.319865+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T14:10:25.309813+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
         "mode": "dynamic_industry"
       }
     }

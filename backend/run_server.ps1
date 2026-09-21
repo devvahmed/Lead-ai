@@ -1,5 +1,5 @@
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "       Starting ClientPlus AI Backend Server          " -ForegroundColor Green
+Write-Host "       Starting Lead-AI Backend Server          " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
 Set-Location -Path $PSScriptRoot
 $env:PYTHONUNBUFFERED="1"
