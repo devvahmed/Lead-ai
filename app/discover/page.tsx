@@ -606,6 +606,22 @@ function exportCompaniesToCSV(companies: Company[], keyword: string) {
   URL.revokeObjectURL(url);
 }
 
+function mergeCompanyLists(existing: Company[], incoming: Company[]): Company[] {
+  const map = new Map<string, Company>();
+  for (const c of existing) {
+    const key = (c.domain || c.website || c.id || c.name || '').toLowerCase().trim();
+    if (key) map.set(key, c);
+  }
+  for (const c of incoming) {
+    const key = (c.domain || c.website || c.id || c.name || '').toLowerCase().trim();
+    if (key) {
+      const prev = map.get(key);
+      map.set(key, { ...(prev || {}), ...c });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DiscoverPage() {
@@ -706,7 +722,7 @@ export default function DiscoverPage() {
     });
   }, []);
 
-  // ── Restore search state from sessionStorage on page mount ─────────────────
+  // ── Restore search state from sessionStorage + sync background discovery on mount ──
   useEffect(() => {
     try {
       const savedCompany = getSavedCompany();
@@ -731,6 +747,53 @@ export default function DiscoverPage() {
     } catch (e) {
       console.warn('Failed to restore discover session state:', e);
     }
+
+    // Check if background discovery is currently running or recently completed
+    let mounted = true;
+    const syncBackgroundJob = async () => {
+      try {
+        const token = getAuthToken();
+        const res = await fetch('/api/discover-companies/status', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          cache: 'no-store'
+        });
+        if (!res.ok || !mounted) return;
+        const data = await res.json();
+        if (!mounted) return;
+
+        if (data.active || data.status === 'running') {
+          console.log('[Discover] Resuming active background discovery:', data.job_id);
+          if (data.keyword) setKeyword(data.keyword);
+          if (data.country) setCountry(data.country);
+          if (data.city) setCity(data.city);
+          setHasSearched(true);
+          setLoading(true);
+          if (Array.isArray(data.companies) && data.companies.length > 0) {
+            setCompanies(prev => mergeCompanyLists(prev, data.companies));
+          }
+          setStreamProgress({
+            found: data.found_count || (data.companies ? data.companies.length : 0),
+            target: data.target_count || 10,
+            page: data.progress?.page || 1,
+            active: true
+          });
+        } else if (data.status === 'completed' && Array.isArray(data.companies) && data.companies.length > 0) {
+          if (data.keyword) setKeyword(data.keyword);
+          if (data.country) setCountry(data.country);
+          if (data.city) setCity(data.city);
+          setHasSearched(true);
+          setCompanies(prev => mergeCompanyLists(prev, data.companies));
+        }
+      } catch (err) {
+        console.warn('[Discover] Background discovery sync error:', err);
+      }
+    };
+
+    syncBackgroundJob();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // ── Ref to track which company IDs have already been queued for enrichment
@@ -890,6 +953,71 @@ export default function DiscoverPage() {
     found: number; target: number; page: number; active: boolean;
   } | null>(null);
 
+  // ── Polling sync while background discovery is running ───────────────────────
+  useEffect(() => {
+    if (!loading) return;
+    let isLive = true;
+
+    const interval = setInterval(async () => {
+      try {
+        const token = getAuthToken();
+        const res = await fetch('/api/discover-companies/status', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          cache: 'no-store'
+        });
+        if (!res.ok || !isLive) return;
+        const data = await res.json();
+        if (!isLive) return;
+
+        if (Array.isArray(data.companies) && data.companies.length > 0) {
+          setCompanies(prev => mergeCompanyLists(prev, data.companies));
+          setHasSearched(true);
+        }
+
+        if (data.active || data.status === 'running') {
+          setStreamProgress({
+            found: data.found_count || (data.companies ? data.companies.length : 0),
+            target: data.target_count || 10,
+            page: data.progress?.page || 1,
+            active: true
+          });
+        } else {
+          // Completed or cancelled
+          setLoading(false);
+          setStreamProgress(null);
+          if (data.status === 'completed') {
+            setToast({
+              message: `Discovery finished! Found ${data.found_count || data.companies?.length || 0} qualified prospects.`,
+              type: 'success'
+            });
+          }
+        }
+      } catch (e) {
+        // silent retry
+      }
+    }, 2500);
+
+    return () => {
+      isLive = false;
+      clearInterval(interval);
+    };
+  }, [loading]);
+
+  const handleCancelSearch = useCallback(async () => {
+    try {
+      const token = getAuthToken();
+      await fetch('/api/discover-companies/cancel', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setLoading(false);
+      setStreamProgress(null);
+      setToast({ message: 'Discovery search stopped.', type: 'error' });
+    } catch (e) {
+      console.error('[Discover] Cancel failed:', e);
+    }
+  }, []);
+
   const handleSearch = useCallback(async (forceReset = false) => {
     if (!keyword.trim()) { setError('Please enter an industry or keyword to search.'); return; }
     setLoading(true);
@@ -951,50 +1079,51 @@ export default function DiscoverPage() {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        const accumulated: Company[] = [];
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const event = JSON.parse(trimmed);
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const event = JSON.parse(trimmed);
 
-              if (event.type === 'start') {
-                setStreamProgress({ found: 0, target: event.target ?? 10, page: 1, active: true });
-                setQuery(event.query ?? `${keyword.trim()} companies`);
-              } else if (event.type === 'page_start') {
-                setStreamProgress(prev => prev ? { ...prev, page: event.page } : null);
-              } else if (event.type === 'page_end') {
-                setStreamProgress(prev => prev ? { ...prev, found: event.qualified_so_far } : null);
-              } else if (event.type === 'company') {
-                const { type: _t, ...company } = event;
-                const c = company as Company;
-                // Map leadType from backend (SCREAMING_SNAKE → lower_snake)
-                if ((c as any).leadType) {
-                  (c as any).leadType = String((c as any).leadType).toLowerCase() as 'needs_service' | 'has_similar_service';
+                if (event.type === 'start') {
+                  setStreamProgress({ found: 0, target: event.target ?? 10, page: 1, active: true });
+                  setQuery(event.query ?? `${keyword.trim()} companies`);
+                } else if (event.type === 'page_start') {
+                  setStreamProgress(prev => prev ? { ...prev, page: event.page } : null);
+                } else if (event.type === 'page_end') {
+                  setStreamProgress(prev => prev ? { ...prev, found: event.qualified_so_far } : null);
+                } else if (event.type === 'company') {
+                  const { type: _t, ...company } = event;
+                  const c = company as Company;
+                  if ((c as any).leadType) {
+                    (c as any).leadType = String((c as any).leadType).toLowerCase() as 'needs_service' | 'has_similar_service';
+                  }
+                  if (((c as any).matchConfidence ?? c.trustScore ?? 0) < (minTrust || 0)) continue;
+                  setCompanies(prev => mergeCompanyLists(prev, [c]));
+                  setStreamProgress(prev => prev ? { ...prev, found: (prev.found || 0) + 1 } : null);
+                  setHasSearched(true);
+                } else if (event.type === 'done' || event.type === 'complete') {
+                  setStreamProgress(null);
+                  setLoading(false);
                 }
-                // Client-side filter: confidence gate
-                if (((c as any).matchConfidence ?? c.trustScore ?? 0) < (minTrust || 0)) continue;
-                accumulated.push(c);
-                console.log(`[FRONTEND STREAM] Received company #${accumulated.length}: ${c.name} (${c.domain})`);
-                setCompanies([...accumulated]);
-                setStreamProgress(prev => prev ? { ...prev, found: accumulated.length } : null);
-                setHasSearched(true);
-              } else if (event.type === 'done') {
-                setStreamProgress(null);
+              } catch {
+                // Non-JSON line — skip silently
               }
-            } catch {
-              // Non-JSON line — skip silently
             }
           }
+        } catch (streamErr: any) {
+          // If connection closed or aborted by route change, background task continues in backend!
+          console.log('[Frontend Stream] Stream listener exited:', streamErr?.message);
         }
 
         if (buffer.trim()) {
@@ -1007,9 +1136,7 @@ export default function DiscoverPage() {
                 (c as any).leadType = String((c as any).leadType).toLowerCase() as 'needs_service' | 'has_similar_service';
               }
               if (((c as any).matchConfidence ?? c.trustScore ?? 0) >= (minTrust || 0)) {
-                accumulated.push(c);
-                console.log(`[FRONTEND STREAM Buffer] Received company #${accumulated.length}: ${c.name} (${c.domain})`);
-                setCompanies([...accumulated]);
+                setCompanies(prev => mergeCompanyLists(prev, [c]));
               }
             }
           } catch {}
@@ -1052,11 +1179,12 @@ export default function DiscoverPage() {
         }
       }
 
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+      }
     } finally {
-      setLoading(false);
-      setStreamProgress(null);
+      // If polling took over, it manages loading state until completion
     }
   }, [keyword, country, city, minTrust, lastKeyword, lastCountry, lastCity, currentPage]);
 
@@ -1438,7 +1566,7 @@ export default function DiscoverPage() {
       <AnimatePresence mode="wait">
         {/* Live streaming status banner */}
         {loading && streamProgress && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-4 bg-primary/10 border border-primary/20 rounded-2xl p-4 flex items-center justify-between">
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-4 bg-primary/10 border border-primary/20 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white shrink-0">
                 <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
@@ -1448,12 +1576,22 @@ export default function DiscoverPage() {
                   Searching Page {streamProgress.page}... Found {streamProgress.found} of {streamProgress.target} qualified target companies
                 </p>
                 <p className="text-[12px] text-secondary">
-                  Evaluating web candidates with AI in real time. Cards appear as soon as verified.
+                  ⚡ Continuous background discovery active — safe to switch pages while AI harvests leads.
                 </p>
               </div>
             </div>
-            <div className="px-3 py-1 bg-white rounded-xl text-[12px] font-semibold text-primary border border-primary/20 shadow-sm">
-              {streamProgress.found} / {streamProgress.target} Target
+            <div className="flex items-center gap-2 self-end sm:self-center">
+              <div className="px-3 py-1 bg-white rounded-xl text-[12px] font-semibold text-primary border border-primary/20 shadow-sm">
+                {streamProgress.found} / {streamProgress.target} Target
+              </div>
+              <button
+                onClick={handleCancelSearch}
+                className="px-3 py-1 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl text-[12px] font-semibold flex items-center gap-1 transition-all shadow-sm hover:scale-105 active:scale-95"
+                title="Stop background discovery"
+              >
+                <span className="material-symbols-outlined text-[14px]">cancel</span>
+                Stop
+              </button>
             </div>
           </motion.div>
         )}

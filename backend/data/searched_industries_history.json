@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-09-21T11:20:08.610963+00:00",
-  "total_scanned": 71,
+  "last_updated": "2026-09-21T12:02:51.593259+00:00",
+  "total_scanned": 80,
   "scanned_set": [
     "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
@@ -13,6 +13,8 @@
     "automotive spare parts distributors",
     "boutique commercial real estate brokerages",
     "chemical hazardous materials storage",
+    "cold chain freight brokerage for fresh fruit exporters",
+    "cold chain logistics providers for perishable food transport",
     "cold storage warehouses",
     "commercial hvac refrigeration service management",
     "commercial solar epc contractors",
@@ -24,6 +26,7 @@
     "ecommerce fulfillment centers",
     "fmcg defect detection sorting",
     "food processing line monitoring",
+    "heritage building industrial boiler retrofit services",
     "hightemperature insulation panel fabrication for petrochemical refineries",
     "hydrogen compression station component suppliers",
     "industrial 3d printing service providers for aerospace tooling",
@@ -37,6 +40,8 @@
     "medical supplies hospital logistics",
     "modular data center power distribution unit pdu manufacturers",
     "multilocation dental medical clinics",
+    "offshore platform corrosion monitoring sensor providers",
+    "offshore platform mechanical seal spare parts procurement",
     "oilfield drill pipe replacement services",
     "pharmaceutical packaging inspection",
     "precision cast iron valve manufacturing for water treatment plants",
@@ -45,10 +50,12 @@
     "precision industrial manufacturing facilities",
     "residential real estate brokerages",
     "solar farm epc turnkey project procurement",
+    "solar farm inverter fault detection replacement services",
     "solar pv inverter predictive maintenance service providers",
     "specialty freight dispatch brokering",
     "textile dye house sodium hydrosulfite reagent resupply",
     "textile fabric quality control",
+    "water treatment chemical procurement for textile dyeing plants",
     "wind turbine gearbox precision gear manufacturing"
   ],
   "history": [
@@ -830,6 +837,105 @@
       "metadata": {
         "parent_industry": "Data Center Infrastructure",
         "target_service_fit": "Our autonomous B2B lead generation platform continuously discovers, qualifies, and nurtures procurement contacts for modular PDU projects, delivering a steady pipeline of high‑value contracts and shortening the sales cycle.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Solar Farm Inverter Fault Detection & Replacement Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T11:48:21.902550+00:00",
+      "metadata": {
+        "parent_industry": "Renewable Energy",
+        "target_service_fit": "Our autonomous lead generation system continuously scans performance data and maintenance logs of utility‑scale PV installations across Saudi Arabia, identifying sites with rising inverter fault rates and proactively matching them with certified inverter service providers.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Cold Chain Logistics Providers for Perishable Food Transport",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T11:50:24.920987+00:00",
+      "metadata": {
+        "parent_industry": "Transportation & Logistics",
+        "target_service_fit": "Our autonomous lead generation system continuously identifies and qualifies shippers, food producers, and retailers seeking refrigerated trucking capacity, delivering ready-to-engage prospects that reduce sales cycle time.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Water Treatment Chemical Procurement for Textile Dyeing Plants",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T11:51:11.180450+00:00",
+      "metadata": {
+        "parent_industry": "Chemical Manufacturing",
+        "target_service_fit": "Our autonomous B2B lead generation system continuously identifies and qualifies new textile dyeing plants seeking water treatment chemicals, delivering high‑intent leads directly to suppliers.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Heritage Building Industrial Boiler Retrofit Services",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T11:58:24.312961+00:00",
+      "metadata": {
+        "parent_industry": "Energy & Utilities",
+        "target_service_fit": "Our autonomous lead generation platform continuously identifies building owners, facilities managers, and heritage conservation bodies seeking boiler upgrades, delivering qualified prospects and reducing the months-long sales cycle.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Offshore Platform Mechanical Seal Spare Parts Procurement",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T11:59:32.408131+00:00",
+      "metadata": {
+        "parent_industry": "Oil & Gas Services",
+        "target_service_fit": "Autonomous lead generation identifies qualified mechanical seal manufacturers and distributors, shortening sourcing cycles and reducing unplanned downtime on offshore rigs.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Canada",
+      "scanned_at": "2026-09-21T12:00:12.625140+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Cold Chain Freight Brokerage for Fresh Fruit Exporters",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Pakistan",
+      "scanned_at": "2026-09-21T12:00:46.749279+00:00",
+      "metadata": {
+        "parent_industry": "Logistics & Transportation",
+        "target_service_fit": "Autonomous lead generation to identify and onboard vetted refrigerated carriers and cross‑border customs brokers, reducing manual sourcing time and spoilage risk.",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Precision Industrial Manufacturing Facilities",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "United Kingdom",
+      "scanned_at": "2026-09-21T12:01:53.719710+00:00",
+      "metadata": {
+        "parent_industry": "Advanced Manufacturing",
+        "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
+        "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Offshore Platform Corrosion Monitoring Sensor Providers",
+      "service_context": "autonomous B2B lead generation systems",
+      "country": "Saudi Arabia",
+      "scanned_at": "2026-09-21T12:02:51.593069+00:00",
+      "metadata": {
+        "parent_industry": "Oil & Gas Services",
+        "target_service_fit": "Autonomous B2B lead generation identifies and qualifies maintenance contractors and asset managers seeking corrosion monitoring solutions, reducing sales cycle time and expanding market reach.",
         "mode": "dynamic_industry"
       }
     }

@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSavedCompany, clearAuth, CompanyProfile } from '@/lib/auth';
+import { getSavedCompany, clearAuth, getAuthToken, CompanyProfile } from '@/lib/auth';
 
 interface TopNavProps {
   onMenuClick: () => void;
@@ -13,12 +14,48 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
   const [focused, setFocused] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [company, setCompany] = useState<CompanyProfile | null>(null);
+  const [activeDisc, setActiveDisc] = useState<{ active: boolean; keyword: string; found: number; target: number } | null>(null);
 
   useEffect(() => {
     const saved = getSavedCompany();
     if (saved) {
       setCompany(saved);
     }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkDisc = async () => {
+      try {
+        const token = getAuthToken();
+        const res = await fetch('/api/discover-companies/status', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          cache: 'no-store'
+        });
+        if (!res.ok || !mounted) return;
+        const data = await res.json();
+        if (!mounted) return;
+        if (data.active || data.status === 'running') {
+          setActiveDisc({
+            active: true,
+            keyword: data.keyword || 'Companies',
+            found: data.found_count || (data.companies ? data.companies.length : 0),
+            target: data.target_count || 10
+          });
+        } else {
+          setActiveDisc(null);
+        }
+      } catch {
+        // quiet fallback
+      }
+    };
+
+    checkDisc();
+    const timer = setInterval(checkDisc, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
   }, []);
 
   const getInitials = (name?: string) => {
@@ -66,6 +103,23 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
 
         {/* Right: Actions & User Info */}
         <div className="flex items-center gap-3">
+          {/* Active Background Discovery Pill */}
+          {activeDisc && activeDisc.active && (
+            <Link
+              href="/discover"
+              className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-primary text-xs font-semibold rounded-full transition-all shadow-sm group hover:scale-105 active:scale-95"
+              title="Background discovery active — click to view live results"
+            >
+              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+              <span className="truncate max-w-[140px] text-primary font-medium group-hover:underline">
+                Discovering: {activeDisc.keyword}
+              </span>
+              <span className="px-1.5 py-0.5 bg-primary text-white text-[10px] font-bold rounded-full">
+                {activeDisc.found}/{activeDisc.target}
+              </span>
+            </Link>
+          )}
+
           {/* Notifications */}
           <div className="relative">
             <motion.button

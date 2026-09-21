@@ -67,13 +67,33 @@ async function proxyToBackend(body: object, authHeader?: string | null): Promise
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  const isStatusQuery = searchParams.get('status') === 'true';
+  const authHeader = req.headers.get('authorization');
+
+  if (isStatusQuery) {
+    try {
+      const resp = await fetch(`${getBackendUrl()}/discover-companies/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        cache: 'no-store',
+      });
+      const data = await resp.json();
+      return NextResponse.json(data, { status: resp.status });
+    } catch (e: any) {
+      return NextResponse.json({ active: false, status: 'idle', companies: [] }, { status: 200 });
+    }
+  }
+
   const keyword = searchParams.get('keyword')?.trim() || '';
   const country = searchParams.get('country')?.trim() || '';
   const city = searchParams.get('city')?.trim() || '';
   const minTrustScore = searchParams.get('minTrustScore');
   const pageno = searchParams.get('pageno');
   const resetCursor = searchParams.get('resetCursor') === 'true' || searchParams.get('clearCache') === 'true';
-  const authHeader = req.headers.get('authorization');
 
   if (!keyword) {
     return NextResponse.json({ error: 'Keyword is required.' }, { status: 400 });

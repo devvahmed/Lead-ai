@@ -427,10 +427,14 @@ class DiscoverRequest(BaseModel):
     page: Optional[int] = 1
     target_count: Optional[int] = 10
     reset_cursor: Optional[bool] = False
+    resetCursor: Optional[bool] = False
+    clearCache: Optional[bool] = False
+    force_reset: Optional[bool] = False
     our_company: Optional[str] = None
     our_services: Optional[str] = None
     mode: Optional[str] = "target_companies"
     discovery_mode: Optional[str] = "hybrid"
+
 
 
 # ─── Search Provider Helpers ──────────────────────────────────────────────────
@@ -2193,6 +2197,220 @@ async def stream_discovery(
     }) + "\n"
 
 
+# ─── Background Discovery Job Manager (Persistent Discovery) ─────────────────
+class DiscoveryJob:
+    def __init__(
+        self,
+        job_id: str,
+        company_id: int,
+        keyword: str,
+        country: str,
+        city: str,
+        target_count: int,
+        min_trust: float,
+        our_company: str,
+        gen_kwargs: dict
+    ):
+        self.job_id = job_id
+        self.company_id = company_id
+        self.keyword = keyword
+        self.country = country
+        self.city = city
+        self.target_count = target_count
+        self.min_trust = min_trust
+        self.our_company = our_company
+        self.gen_kwargs = gen_kwargs
+        self.status = "running"  # "running", "completed", "cancelled", "failed"
+        self.results: List[Dict[str, Any]] = []
+        self.events: List[str] = []
+        self.task: Optional[asyncio.Task] = None
+        self.start_time = time.time()
+        self.updated_at = time.time()
+        self.error: Optional[str] = None
+        self.progress: Dict[str, Any] = {"page": 1, "qualified": 0, "target": target_count}
+        self.new_event_notify = asyncio.Event()
+
+
+class DiscoveryJobManager:
+    def __init__(self):
+        self.jobs: Dict[int, DiscoveryJob] = {}  # company_id -> DiscoveryJob
+        self.lock = asyncio.Lock()
+
+    def get_job(self, company_id: int) -> Optional[DiscoveryJob]:
+        return self.jobs.get(company_id)
+
+    async def start_or_get_job(
+        self,
+        company_id: int,
+        keyword: str,
+        country: str,
+        city: str,
+        target_count: int,
+        min_trust: float,
+        our_company: str,
+        gen_kwargs: dict,
+        force_restart: bool = False
+    ) -> DiscoveryJob:
+        async with self.lock:
+            existing = self.jobs.get(company_id)
+            if existing and existing.status == "running" and not force_restart:
+                same_query = (
+                    existing.keyword.strip().lower() == keyword.strip().lower() and
+                    existing.country.strip().lower() == (country or "").strip().lower() and
+                    existing.city.strip().lower() == (city or "").strip().lower()
+                )
+                if same_query:
+                    print(f"[DiscoveryJobManager] Reconnecting to existing running background discovery {existing.job_id} for company_id={company_id}")
+                    return existing
+                else:
+                    print(f"[DiscoveryJobManager] Cancelling prior running discovery {existing.job_id} to start new search '{keyword}'")
+                    if existing.task and not existing.task.done():
+                        existing.task.cancel()
+                    existing.status = "cancelled"
+                    existing.new_event_notify.set()
+
+            # Initialize new background discovery job
+            job_id = f"disc_{company_id}_{int(time.time())}"
+            job = DiscoveryJob(
+                job_id=job_id,
+                company_id=company_id,
+                keyword=keyword,
+                country=country or "",
+                city=city or "",
+                target_count=target_count,
+                min_trust=min_trust,
+                our_company=our_company,
+                gen_kwargs=gen_kwargs
+            )
+            self.jobs[company_id] = job
+            job.task = asyncio.create_task(self._run_job(job))
+            return job
+
+    async def _run_job(self, job: DiscoveryJob):
+        print(f"\n[DiscoveryJobManager] 🚀 BACKGROUND DISCOVERY TASK STARTED: job_id={job.job_id}, query='{job.keyword}', country='{job.country}', target={job.target_count}")
+        try:
+            async for line in stream_discovery(**job.gen_kwargs):
+                job.updated_at = time.time()
+                job.events.append(line)
+                try:
+                    data = json.loads(line.strip())
+                    ev_type = data.get("type")
+                    if ev_type == "company":
+                        comp_domain = (data.get("domain") or data.get("website") or "").lower()
+                        existing_domains = {
+                            (c.get("domain") or c.get("website") or "").lower() for c in job.results
+                        }
+                        if not comp_domain or comp_domain not in existing_domains:
+                            job.results.append(data)
+                        job.progress["qualified"] = len(job.results)
+                    elif ev_type == "progress":
+                        job.progress["page"] = data.get("page", job.progress.get("page", 1))
+                        job.progress["qualified"] = data.get("qualified", len(job.results))
+                    elif ev_type in ("complete", "done"):
+                        job.status = "completed"
+                except Exception:
+                    pass
+
+                old_notify = job.new_event_notify
+                job.new_event_notify = asyncio.Event()
+                old_notify.set()
+
+            if job.status == "running":
+                job.status = "completed"
+            print(f"[DiscoveryJobManager] ✅ BACKGROUND DISCOVERY TASK COMPLETED: job_id={job.job_id}, found {len(job.results)} qualified companies.")
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            print(f"[DiscoveryJobManager] 🛑 BACKGROUND DISCOVERY TASK CANCELLED: job_id={job.job_id}")
+        except Exception as e:
+            job.status = "failed"
+            job.error = str(e)
+            print(f"[DiscoveryJobManager] ❌ BACKGROUND DISCOVERY TASK FAILED: job_id={job.job_id}: {e}")
+        finally:
+            job.new_event_notify.set()
+
+    async def cancel_job(self, company_id: int) -> bool:
+        job = self.jobs.get(company_id)
+        if job and job.status == "running":
+            if job.task and not job.task.done():
+                job.task.cancel()
+            job.status = "cancelled"
+            job.new_event_notify.set()
+            return True
+        return False
+
+    async def stream_job_events(self, job: DiscoveryJob) -> AsyncIterator[str]:
+        cursor = 0
+        try:
+            while True:
+                while cursor < len(job.events):
+                    ev = job.events[cursor]
+                    cursor += 1
+                    yield ev
+
+                if job.status in ("completed", "cancelled", "failed"):
+                    while cursor < len(job.events):
+                        yield job.events[cursor]
+                        cursor += 1
+                    break
+
+                notify = job.new_event_notify
+                try:
+                    await asyncio.wait_for(notify.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+        except (asyncio.CancelledError, GeneratorExit):
+            print(f"[DiscoveryJobManager] Client stream socket closed for {job.job_id}. BACKGROUND TASK RUNS UNAFFECTED!")
+
+
+discovery_manager = DiscoveryJobManager()
+
+
+# ─── Status & Cancel Endpoints (JWT Protected) ──────────────────────────────
+@discover_router.get("/discover-companies/status")
+async def get_discover_status(
+    current_company: Company = Depends(get_current_company)
+):
+    company_id = getattr(current_company, "id", 1) or 1
+    job = discovery_manager.get_job(company_id)
+    if not job:
+        return {
+            "active": False,
+            "status": "idle",
+            "job_id": None,
+            "keyword": "",
+            "country": "",
+            "city": "",
+            "target_count": 0,
+            "found_count": 0,
+            "progress": {},
+            "companies": []
+        }
+    return {
+        "active": job.status == "running",
+        "status": job.status,
+        "job_id": job.job_id,
+        "keyword": job.keyword,
+        "country": job.country,
+        "city": job.city,
+        "target_count": job.target_count,
+        "found_count": len(job.results),
+        "progress": job.progress,
+        "companies": job.results,
+        "start_time": job.start_time,
+        "updated_at": job.updated_at,
+        "error": job.error
+    }
+
+
+@discover_router.post("/discover-companies/cancel")
+async def cancel_discover(
+    current_company: Company = Depends(get_current_company)
+):
+    company_id = getattr(current_company, "id", 1) or 1
+    stopped = await discovery_manager.cancel_job(company_id)
+    return {"success": True, "stopped": stopped}
+
+
 # ─── Streaming POST /discover-companies (JWT Protected) ──────────────────────
 @discover_router.post("/discover-companies")
 async def post_discover_companies(
@@ -2220,9 +2438,17 @@ async def post_discover_companies(
     print(f"\n[FASTAPI BACKEND] 🚀 RECEIVED FRONTEND DISCOVER POST REQUEST: keyword='{req.keyword}' country='{req.country}' city='{req.city}' company='{effective_company_name}' services='{effective_services}'", flush=True)
 
     effective_mode = req.mode or ("direct_search" if req.keyword and req.keyword.strip() else "target_companies")
+    force_restart = bool(req.clearCache or req.reset_cursor or req.resetCursor or req.force_reset)
 
-    return StreamingResponse(
-        stream_discovery(
+    job = await discovery_manager.start_or_get_job(
+        company_id=(getattr(current_company, "id", 1) or 1),
+        keyword=req.keyword,
+        country=req.country or "",
+        city=req.city or "",
+        target_count=int(req.target_count or 10),
+        min_trust=float(min_trust),
+        our_company=effective_company_name,
+        gen_kwargs=dict(
             keyword=req.keyword,
             country=req.country or "",
             city=req.city or "",
@@ -2240,9 +2466,15 @@ async def post_discover_companies(
             mode=effective_mode,
             discovery_mode=req.discovery_mode or "hybrid"
         ),
+        force_restart=force_restart
+    )
+
+    return StreamingResponse(
+        discovery_manager.stream_job_events(job),
         media_type="application/x-ndjson",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
     )
+
 
 # ─── Streaming GET /discover-companies (JWT Protected) ──────────────────────
 @discover_router.get("/discover-companies")
@@ -2260,6 +2492,8 @@ async def get_discover_companies(
     our_services: Optional[str] = Query(None),
     mode: Optional[str] = Query(None),
     discovery_mode: Optional[str] = Query("hybrid"),
+    reset_cursor: Optional[bool] = Query(False),
+    clearCache: Optional[bool] = Query(False),
     current_company: Company = Depends(get_current_company)
 ):
     if not keyword or not keyword.strip():
@@ -2281,9 +2515,17 @@ async def get_discover_companies(
     print(f"\n[FASTAPI BACKEND] 🚀 RECEIVED FRONTEND DISCOVER GET REQUEST: keyword='{keyword}' country='{country}' city='{city}' company='{effective_company_name}' services='{effective_services}'", flush=True)
 
     effective_mode = mode or ("direct_search" if keyword and keyword.strip() else "target_companies")
+    force_restart = bool(clearCache or reset_cursor)
 
-    return StreamingResponse(
-        stream_discovery(
+    job = await discovery_manager.start_or_get_job(
+        company_id=(getattr(current_company, "id", 1) or 1),
+        keyword=keyword,
+        country=country or "",
+        city=city or "",
+        target_count=int(target_count or 10),
+        min_trust=float(min_trust),
+        our_company=effective_company_name,
+        gen_kwargs=dict(
             keyword=keyword,
             country=country or "",
             city=city or "",
@@ -2301,6 +2543,12 @@ async def get_discover_companies(
             mode=effective_mode,
             discovery_mode=discovery_mode or "hybrid"
         ),
+        force_restart=force_restart
+    )
+
+    return StreamingResponse(
+        discovery_manager.stream_job_events(job),
         media_type="application/x-ndjson",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
     )
+
