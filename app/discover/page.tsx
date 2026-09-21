@@ -438,11 +438,23 @@ function CompanyCard({
           <>
             {company.email ? (
               /* Primary: EMAIL */
-              <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
-                <span className="material-symbols-outlined text-[14px] text-primary flex-shrink-0">email</span>
-                <a href={`mailto:${company.email.split(',')[0].trim()}`} className="font-medium text-primary hover:underline truncate">
-                  {company.email.split(',')[0].trim()}
-                </a>
+              <div className="flex items-center justify-between gap-1.5 text-[12px] text-on-surface">
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="material-symbols-outlined text-[14px] text-primary flex-shrink-0">email</span>
+                  <a href={`mailto:${company.email.split(',')[0].trim()}`} className="font-medium text-primary hover:underline truncate">
+                    {company.email.split(',')[0].trim()}
+                  </a>
+                </div>
+                {company.verification_status === 'smtp_verified' ? (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-1.5 py-0.2 rounded-md shrink-0 flex items-center gap-0.5" title="Strict Zero-Send SMTP Verified (250 OK)">
+                    <span className="material-symbols-outlined text-[11px] text-emerald-600">verified</span>
+                    SMTP Verified
+                  </span>
+                ) : company.emails && company.emails.length > 1 ? (
+                  <span className="text-[10.5px] bg-surface-container-high text-secondary px-1.5 py-0.5 rounded font-medium shrink-0">
+                    +{company.emails.length - 1} more
+                  </span>
+                ) : null}
               </div>
             ) : company.phone ? (
               /* Primary: PHONE */
@@ -469,6 +481,36 @@ function CompanyCard({
               <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
                 <span className="material-symbols-outlined text-[13px] text-gray-400 flex-shrink-0">subtitles_off</span>
                 <span>No direct contact info found</span>
+              </div>
+            )}
+
+            {/* Decision Makers List (if discovered) */}
+            {((company.decisionMakers && company.decisionMakers.length > 0) || (company.decision_makers && company.decision_makers.length > 0)) && (
+              <div className="pt-1.5 mt-0.5 border-t border-outline-variant/40 flex flex-col gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-secondary flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[12px] text-primary">badge</span>
+                  Leadership & Decision Makers
+                </span>
+                {(company.decisionMakers || company.decision_makers).slice(0, 2).map((dm: any, dmIdx: number) => (
+                  <div key={dmIdx} className="flex items-center justify-between text-[11.5px] bg-surface-container/60 rounded-lg px-2 py-1 border border-outline-variant/30">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className="font-semibold text-on-surface truncate">{dm.name}</span>
+                      <span className="text-[10px] text-secondary truncate">({dm.role})</span>
+                    </div>
+                    {dm.email && (
+                      <span className={`text-[9.5px] font-medium px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5 ${
+                        dm.verification_status === 'smtp_verified'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-blue-100 text-blue-800 border border-blue-200'
+                      }`}>
+                        <span className="material-symbols-outlined text-[10px]">
+                          {dm.verification_status === 'smtp_verified' ? 'verified' : 'mail'}
+                        </span>
+                        {dm.verification_status === 'smtp_verified' ? 'Verified' : 'MX Valid'}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 

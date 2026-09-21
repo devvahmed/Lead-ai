@@ -955,6 +955,44 @@ Return ONLY a valid JSON object (no markdown, no extra text):
     except Exception as e:
         print(f"[Ollama Enrich] Skipped/Timed out: {e} — using regex contacts directly")
 
+    # Step 4.5: Advanced Contact Intelligence (Web Footprint Dork + Decision Makers + Zero-Send MX/SMTP Validation)
+    decision_makers = []
+    footprint_emails = []
+    verification_status = "unverified"
+    try:
+        from urllib.parse import urlparse
+        dom = urlparse(normalized_url).netloc.replace("www.", "")
+        if dom:
+            from contact_enricher_pro import enrich_company_contacts_advanced
+            pro_intel = await asyncio.wait_for(
+                enrich_company_contacts_advanced(
+                    domain=dom,
+                    company_name=data.company_name,
+                    existing_emails=emails,
+                    timeout=8.0
+                ),
+                timeout=9.0
+            )
+            decision_makers = pro_intel.get("decision_makers", [])
+            footprint_emails = pro_intel.get("footprint_emails", [])
+            
+            # Merge enriched emails
+            if pro_intel.get("all_emails"):
+                emails = list(dict.fromkeys(emails + pro_intel["all_emails"]))
+            
+            # If we found a strictly verified decision-maker or if no primary email was found initially
+            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
+            if strict_dm and strict_dm.get("email"):
+                primary_email = strict_dm["email"]
+                source_label = f"Verified: {strict_dm.get('role', 'Decision Maker')} ({strict_dm.get('name')})"
+                verification_status = "smtp_verified"
+            elif not primary_email and pro_intel.get("primary_email"):
+                primary_email = pro_intel["primary_email"]
+                source_label = "Web Footprint & Domain MX Verified"
+                verification_status = "mx_verified"
+    except Exception as pro_e:
+        print(f"[ContactEnricherPro] Fallback to standard contacts: {pro_e}")
+
     # TF-IDF relevance score — computed after scraping, before Ollama call
     relevance = compute_relevance_score(content[:500])
     print(f"[TF-IDF] enrich-contacts relevance_score={relevance}")
@@ -969,10 +1007,13 @@ Return ONLY a valid JSON object (no markdown, no extra text):
         "contact_page_url":     contact_page_url,
         "source_label":         source_label,
         "source_context":       intel.get("email_source_context", source_context),
-        "found":                bool(emails or phones or linkedin_company or linkedin_people),
+        "found":                bool(emails or phones or linkedin_company or linkedin_people or decision_makers),
+        "decision_makers":      decision_makers,
+        "footprint_emails":     footprint_emails,
+        "verification_status":  verification_status,
         # Backward-compatible fields:
         "emails":               intel.get("emails", emails),
-        "stakeholder":          intel.get("stakeholder", "Not found"),
+        "stakeholder":          decision_makers[0].get("name") if decision_makers else intel.get("stakeholder", "Not found"),
         "context_snippet":      intel.get("context_snippet", "Not found"),
         "email_source_context": intel.get("email_source_context", source_context),
         "source_page":          source_page,
@@ -1292,6 +1333,38 @@ async def deep_enrich(data: EnrichRequest):
         except Exception as he:
             print(f"[Hunter.io Fallback] Skipped/Error: {he}")
 
+    # Priority 3: ContactEnricherPro (Web Footprint Dork + Decision Makers + Zero-Send MX/SMTP Validation)
+    decision_makers = []
+    footprint_emails = []
+    try:
+        from urllib.parse import urlparse
+        dom = urlparse(normalized_url).netloc.replace("www.", "")
+        if dom:
+            from contact_enricher_pro import enrich_company_contacts_advanced
+            pro_intel = await asyncio.wait_for(
+                enrich_company_contacts_advanced(
+                    domain=dom,
+                    company_name=data.company_name,
+                    existing_emails=emails,
+                    timeout=8.0
+                ),
+                timeout=9.0
+            )
+            decision_makers = pro_intel.get("decision_makers", [])
+            footprint_emails = pro_intel.get("footprint_emails", [])
+            if pro_intel.get("all_emails"):
+                emails = list(dict.fromkeys(emails + pro_intel["all_emails"]))
+            
+            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
+            if strict_dm and strict_dm.get("email"):
+                primary_email = strict_dm["email"]
+                source_label = f"Verified: {strict_dm.get('role', 'Executive')} ({strict_dm.get('name')})"
+            elif not primary_email and pro_intel.get("primary_email"):
+                primary_email = pro_intel["primary_email"]
+                source_label = "Web Footprint & Domain MX Verified"
+    except Exception as pro_e:
+        print(f"[Deep Enrich Pro] Skipped/Error: {pro_e}")
+
     print(f"[Deep Enrich] Done — emails={emails}, phones={phones[:3]}, linkedin={linkedin_company}")
 
     return {
@@ -1304,7 +1377,9 @@ async def deep_enrich(data: EnrichRequest):
         "linkedin_people":  linkedin_people,
         "contact_page_url": contact_page_url,
         "source_label":     source_label,
-        "found":            bool(emails or phones or linkedin_company or linkedin_people),
+        "found":            bool(emails or phones or linkedin_company or linkedin_people or decision_makers),
+        "decision_makers":  decision_makers,
+        "footprint_emails": footprint_emails,
         "stage":            2,
     }
 

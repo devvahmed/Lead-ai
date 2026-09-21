@@ -5,6 +5,7 @@ import time
 import asyncio
 import logging
 import socket
+import html
 
 logger = logging.getLogger("discover")
 import urllib.request
@@ -565,8 +566,9 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
                                     target_u = "https://" + c_u if not c_u.startswith("http") else c_u
                             
                             dom = clean_domain(target_u)
-                            if target_u.startswith("http") and dom and len(target_u) > 10 and dom not in EXCLUDE_DOMAINS:
-                                if not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
+                            is_site_query = "site:" in query.lower()
+                            if target_u.startswith("http") and dom and len(target_u) > 10 and (is_site_query or dom not in EXCLUDE_DOMAINS):
+                                if is_site_query or not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
                                     m_t = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
                                     t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
                                     t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
@@ -1971,6 +1973,35 @@ async def stream_discovery(
                         except Exception as cp_err:
                             logger.debug(f"[Deep Contact Probe] Error probing {url}: {cp_err}")
 
+                    # Advanced Contact Intelligence (Web Footprint Dork + Decision Makers + Zero-Send MX/SMTP Validation)
+                    decision_makers = []
+                    footprint_emails = []
+                    if domain and not is_clients_mode:
+                        try:
+                            from contact_enricher_pro import enrich_company_contacts_advanced
+                            pro_intel = await asyncio.wait_for(
+                                enrich_company_contacts_advanced(
+                                    domain=domain,
+                                    company_name=company_name,
+                                    existing_emails=found_emails,
+                                    timeout=7.0
+                                ),
+                                timeout=8.0
+                            )
+                            decision_makers = pro_intel.get("decision_makers", [])
+                            footprint_emails = pro_intel.get("footprint_emails", [])
+                            if pro_intel.get("all_emails"):
+                                found_emails = list(dict.fromkeys(found_emails + pro_intel["all_emails"]))
+                            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
+                            if strict_dm and strict_dm.get("email"):
+                                primary_email = strict_dm["email"]
+                                print(f"[ContactEnricherPro] 🎯 Verified leadership inbox for {domain}: {primary_email} ({strict_dm.get('name')} - {strict_dm.get('role')})")
+                            elif not primary_email and pro_intel.get("primary_email"):
+                                primary_email = pro_intel["primary_email"]
+                                print(f"[ContactEnricherPro] 🎯 Verified footprint/domain email for {domain}: {primary_email}")
+                        except Exception as pro_err:
+                            logger.debug(f"[ContactEnricherPro] Skipped for {domain}: {pro_err}")
+
                     # ── Service-Agnostic Operational Bottleneck Audit Engine (Step 7) ──
                     try:
                         audit_res = await audit_company_operations(
@@ -2076,6 +2107,10 @@ async def stream_discovery(
                         "phones": found_phones,
                         "emails": found_emails,
                         "linkedin": found_linkedin,
+                        "decisionMakers": decision_makers,
+                        "decision_makers": decision_makers,
+                        "footprintEmails": footprint_emails,
+                        "footprint_emails": footprint_emails,
                         "leadType": lead_type.lower().replace("_", "_"),  # 'needs_service' or 'has_similar_service'
                         "source": source,
                         "dataSource": item_data_source,
