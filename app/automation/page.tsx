@@ -236,9 +236,14 @@ export default function AutomationPage() {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 3500);
-    return () => clearInterval(interval);
   }, []);
+
+  // Only poll when actively running to prevent terminal flooding & unnecessary re-renders
+  useEffect(() => {
+    if (statusData?.status !== 'RUNNING') return;
+    const interval = setInterval(fetchStatus, 4000);
+    return () => clearInterval(interval);
+  }, [statusData?.status]);
 
   const filteredCountries = GLOBAL_COUNTRY_DATABASE.filter(
     (c) =>

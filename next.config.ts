@@ -4,6 +4,26 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  turbopack: {},
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.watchOptions = {
+        ignored: [
+          '**/.git/**',
+          '**/node_modules/**',
+          '**/.next/**',
+          '**/backend/**',
+          '**/scratch/**',
+          '**/*.db',
+          '**/*.db-journal',
+          '**/*.db-wal',
+          '**/*.csv',
+          '**/processed_domains.json',
+        ],
+      };
+    }
+    return config;
+  },
   // Allow LAN access from client PCs so dev resources and React hydration execute properly
   allowedDevOrigins: [
     '192.168.0.112',

@@ -37,6 +37,10 @@ import threading
 import urllib.request
 import urllib.error
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
+load_dotenv(override=True)
 
 logger = logging.getLogger("llm_utils")
 
@@ -65,7 +69,7 @@ def _groq_key() -> str:
 
 
 def _groq_model() -> str:
-    return os.getenv("GROQ_MODEL", "groq/compound-mini")
+    return os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 
 
 def _gemini_key() -> str:
@@ -73,7 +77,28 @@ def _gemini_key() -> str:
 
 
 def _gemini_model() -> str:
-    return os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    return os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+
+def _get_gemini_models() -> List[str]:
+    """Returns ordered list of Gemini models to try: primary from env, then fallbacks."""
+    primary = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    candidates = [
+        primary,
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+    ]
+    seen = set()
+    models = []
+    for m in candidates:
+        if m and m not in seen:
+            seen.add(m)
+            models.append(m)
+    return models
 
 
 try:
@@ -88,6 +113,7 @@ except Exception:
 
 # --- Ollama probe cache -------------------------------------------------------
 
+OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "30.0"))
 _ollama_lock = threading.Lock()
 _ollama_last_check: float = 0.0
 _ollama_available: bool = False
@@ -95,6 +121,11 @@ _ollama_active_model: str = ""
 _ollama_installed_models: list = []
 _OLLAMA_RECHECK_INTERVAL: float = 30.0   # seconds
 _OLLAMA_CONNECT_TIMEOUT: float = 3.0     # connect probe timeout
+
+# Circuit Breaker: If Ollama fails twice in a row, skip for 5 minutes
+_ollama_consecutive_failures: int = 0
+_ollama_circuit_broken_until: float = 0.0
+_OLLAMA_CIRCUIT_BREAKER_DURATION: float = 300.0  # 5 minutes
 
 
 # --- Load-balancer counter ----------------------------------------------------
@@ -115,6 +146,13 @@ def _next_lb_index() -> int:
 
 def _probe_ollama() -> bool:
     global _ollama_last_check, _ollama_available, _ollama_active_model, _ollama_installed_models
+    now_real = time.time()
+    # Check circuit breaker
+    if now_real < _ollama_circuit_broken_until:
+        remaining = int(_ollama_circuit_broken_until - now_real)
+        logger.debug(f"[LLM Router] Ollama circuit breaker ACTIVE ({remaining}s remaining) -- skipping Ollama.")
+        return False
+
     now = time.monotonic()
     with _ollama_lock:
         if now - _ollama_last_check < _OLLAMA_RECHECK_INTERVAL:
@@ -167,7 +205,13 @@ def _call_ollama(
     timeout: float,
     domain_tag: str,
 ) -> Optional[str]:
-    global _ollama_last_check
+    global _ollama_last_check, _ollama_consecutive_failures, _ollama_circuit_broken_until
+    now_real = time.time()
+    if now_real < _ollama_circuit_broken_until:
+        remaining = int(_ollama_circuit_broken_until - now_real)
+        print(f"[Ollama Circuit Breaker] Ollama skipped ({remaining}s remaining on 5-min breaker).", flush=True)
+        return None
+
     base = _ollama_base()
     endpoint = f"{base}/api/generate"
     model = _ollama_active_model or _ollama_model()
@@ -187,6 +231,7 @@ def _call_ollama(
         if max_tokens is not None:
             payload["options"]["num_predict"] = max_tokens
 
+    eff_timeout = timeout if timeout is not None else OLLAMA_TIMEOUT
     t0 = time.time()
     try:
         data = json.dumps(payload).encode("utf-8")
@@ -195,7 +240,7 @@ def _call_ollama(
             headers={"Content-Type": "application/json", "User-Agent": "ClientPlus-AI/1.0"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=eff_timeout) as r:
             body = json.loads(r.read().decode("utf-8"))
             content = body.get("response", "")
             if not content and "choices" in body:
@@ -203,6 +248,8 @@ def _call_ollama(
             content = content.strip()
             elapsed = time.time() - t0
             print(f"[Ollama] {tag}<- OK ({len(content)} chars, {elapsed:.1f}s)", flush=True)
+            _ollama_consecutive_failures = 0
+            _ollama_circuit_broken_until = 0.0
             return content
     except urllib.error.HTTPError as e:
         err_body = ""
@@ -214,13 +261,20 @@ def _call_ollama(
         print(f"[Ollama] {tag}FAILED (HTTP {e.code}: {e.reason}, {elapsed:.1f}s) | Details: {err_body}", flush=True)
         with _ollama_lock:
             _ollama_last_check = 0.0
+        _ollama_consecutive_failures += 1
+        if _ollama_consecutive_failures >= 2:
+            _ollama_circuit_broken_until = time.time() + _OLLAMA_CIRCUIT_BREAKER_DURATION
+            print(f"[Ollama Circuit Breaker] Ollama failed {_ollama_consecutive_failures} times in a row. Tripping circuit breaker for 5 minutes.", flush=True)
         return None
     except Exception as e:
         elapsed = time.time() - t0
         print(f"[Ollama] {tag}FAILED ({type(e).__name__}: {e}, {elapsed:.1f}s)", flush=True)
-        # Invalidate probe cache so next call re-probes immediately
         with _ollama_lock:
             _ollama_last_check = 0.0
+        _ollama_consecutive_failures += 1
+        if _ollama_consecutive_failures >= 2:
+            _ollama_circuit_broken_until = time.time() + _OLLAMA_CIRCUIT_BREAKER_DURATION
+            print(f"[Ollama Circuit Breaker] Ollama failed {_ollama_consecutive_failures} times in a row. Tripping circuit breaker for 5 minutes.", flush=True)
         return None
 
 
@@ -299,11 +353,7 @@ def _call_gemini(
     if not api_key:
         return None
 
-    model = _gemini_model()
-    endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={api_key}"
-    )
+    models = _get_gemini_models()
     tag = f"[{domain_tag}] " if domain_tag else ""
 
     # Gemini supports systemInstruction separately since API v1beta
@@ -311,47 +361,58 @@ def _call_gemini(
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": temperature,
-            "maxOutputTokens": max_tokens,
+            "maxOutputTokens": max(max_tokens, 500),
         },
     }
     if system_prompt:
         payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
-    t0 = time.time()
-    try:
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            endpoint, data=data,
-            headers={"Content-Type": "application/json", "User-Agent": "ClientPlus-AI/1.0"},
-            method="POST",
+
+    for model in models:
+        endpoint = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent?key={api_key}"
         )
-        with urllib.request.urlopen(req, timeout=25.0) as r:
-            body = json.loads(r.read().decode("utf-8"))
-            candidate = body.get("candidates", [{}])[0]
-            cand_content = candidate.get("content", {})
-            parts = cand_content.get("parts", [])
-            # Some Gemini thinking models include parts with only thoughtSignature (no text)
-            text_parts = [p["text"] for p in parts if "text" in p]
-            content = " ".join(text_parts).strip()
-            elapsed = time.time() - t0
-            if content:
-                print(f"[Gemini] {tag}<- OK ({len(content)} chars, {elapsed:.1f}s)", flush=True)
-                return content
-            finish = candidate.get("finishReason", "UNKNOWN")
-            print(f"[Gemini] {tag}Empty response (finishReason={finish}, {elapsed:.1f}s)", flush=True)
-            return None
-    except urllib.error.HTTPError as e:
-        err_body = ""
+        t0 = time.time()
         try:
-            err_body = e.read().decode("utf-8")[:200]
-        except Exception:
-            pass
-        elapsed = time.time() - t0
-        print(f"[Gemini] {tag}HTTP {e.code} ({elapsed:.1f}s): {err_body}", flush=True)
-        return None
-    except Exception as e:
-        elapsed = time.time() - t0
-        print(f"[Gemini] {tag}FAILED ({type(e).__name__}: {e}, {elapsed:.1f}s)", flush=True)
-        return None
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                endpoint, data=data,
+                headers={"Content-Type": "application/json", "User-Agent": "ClientPlus-AI/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=25.0) as r:
+                body = json.loads(r.read().decode("utf-8"))
+                candidate = body.get("candidates", [{}])[0]
+                cand_content = candidate.get("content", {})
+                parts = cand_content.get("parts", [])
+                # Some Gemini thinking models include parts with only thoughtSignature (no text)
+                text_parts = [p["text"] for p in parts if "text" in p]
+                content = " ".join(text_parts).strip()
+                elapsed = time.time() - t0
+                if content:
+                    print(f"[Gemini] {tag}<- OK (model={model}, {len(content)} chars, {elapsed:.1f}s)", flush=True)
+                    return content
+                finish = candidate.get("finishReason", "UNKNOWN")
+                print(f"[Gemini] {tag}Empty response (model={model}, finishReason={finish}, {elapsed:.1f}s)", flush=True)
+                continue
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8")[:200]
+            except Exception:
+                pass
+            elapsed = time.time() - t0
+            print(f"[Gemini] {tag}HTTP {e.code} for model '{model}' ({elapsed:.1f}s): {err_body}", flush=True)
+            if e.code == 404:
+                print(f"[Gemini] {tag}Model '{model}' not found (404). Trying next fallback model...", flush=True)
+            continue
+        except Exception as e:
+            elapsed = time.time() - t0
+            print(f"[Gemini] {tag}FAILED ({type(e).__name__}: {e}, model={model}, {elapsed:.1f}s)", flush=True)
+            continue
+
+    print(f"[Gemini] {tag}All Gemini candidate models failed.", flush=True)
+    return None
 
 
 # --- Public entry point -------------------------------------------------------
@@ -361,7 +422,7 @@ def call_llm(
     system_prompt: Optional[str] = None,
     temperature: float = 0.2,
     max_tokens: int = 1000,
-    timeout: float = 15.0,
+    timeout: float = OLLAMA_TIMEOUT,
     domain_tag: str = "",
 ) -> Optional[str]:
     """

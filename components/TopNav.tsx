@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getSavedCompany, clearAuth, getAuthToken, CompanyProfile } from '@/lib/auth';
@@ -15,6 +15,8 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
   const [notifOpen, setNotifOpen] = useState(false);
   const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [activeDisc, setActiveDisc] = useState<{ active: boolean; keyword: string; found: number; target: number } | null>(null);
+  const activeDiscRef = useRef(activeDisc);
+  activeDiscRef.current = activeDisc;
 
   useEffect(() => {
     const saved = getSavedCompany();
@@ -25,6 +27,8 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
 
   useEffect(() => {
     let mounted = true;
+    let timer: NodeJS.Timeout | null = null;
+
     const checkDisc = async () => {
       try {
         const token = getAuthToken();
@@ -50,11 +54,31 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
       }
     };
 
+    // Immediate check on mount
     checkDisc();
-    const timer = setInterval(checkDisc, 5000);
+
+    // Adaptive loop: Polls fast (2s) while active discovery is running, slow (15s) when idle
+    const scheduleNext = () => {
+      if (!mounted) return;
+      const delay = (activeDiscRef.current && activeDiscRef.current.active) ? 2000 : 15000;
+      timer = setTimeout(async () => {
+        await checkDisc();
+        scheduleNext();
+      }, delay);
+    };
+
+    scheduleNext();
+
+    // Listen to immediate custom discovery events dispatched across pages
+    const handleStateChange = () => {
+      checkDisc();
+    };
+    window.addEventListener('discovery_state_changed', handleStateChange);
+
     return () => {
       mounted = false;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('discovery_state_changed', handleStateChange);
     };
   }, []);
 
@@ -103,18 +127,21 @@ export default function TopNav({ onMenuClick, placeholder = 'Search companies, c
 
         {/* Right: Actions & User Info */}
         <div className="flex items-center gap-3">
-          {/* Active Background Discovery Pill */}
+          {/* Active Background Discovery Pill - Visible across ALL pages */}
           {activeDisc && activeDisc.active && (
             <Link
               href="/discover"
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-primary text-xs font-semibold rounded-full transition-all shadow-sm group hover:scale-105 active:scale-95"
-              title="Background discovery active — click to view live results"
+              className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-300 text-blue-800 text-xs font-semibold rounded-full transition-all shadow-sm group hover:scale-105 active:scale-95 animate-pulse"
+              title="Continuous background discovery is running — click to view live incoming leads"
             >
-              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-              <span className="truncate max-w-[140px] text-primary font-medium group-hover:underline">
-                Discovering: {activeDisc.keyword}
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
               </span>
-              <span className="px-1.5 py-0.5 bg-primary text-white text-[10px] font-bold rounded-full">
+              <span className="truncate max-w-[130px] sm:max-w-[180px] font-medium text-slate-800 group-hover:text-blue-700">
+                Finding: <span className="font-bold">{activeDisc.keyword}</span>
+              </span>
+              <span className="px-2 py-0.5 bg-blue-600 text-white text-[11px] font-extrabold rounded-full shadow-xs">
                 {activeDisc.found}/{activeDisc.target}
               </span>
             </Link>

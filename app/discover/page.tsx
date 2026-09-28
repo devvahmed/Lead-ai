@@ -51,6 +51,28 @@ export interface Company {
   clientName?: string;
   platform?: string;
   directPostUrl?: string;
+  emails?: string[];
+  all_emails?: string[];
+  phones?: string[];
+  decisionMakers?: Array<{
+    name: string;
+    role?: string;
+    email?: string;
+    linkedin?: string;
+    source?: string;
+    confidence?: number;
+    verification_status?: string;
+  }>;
+  decision_makers?: Array<{
+    name: string;
+    role?: string;
+    email?: string;
+    linkedin?: string;
+    source?: string;
+    confidence?: number;
+    verification_status?: string;
+  }>;
+  verification_status?: string;
 }
 
 interface AnalysisResult {
@@ -212,12 +234,6 @@ function AnalysisModal({
                 <a href={`mailto:${company.email}`} className="text-on-surface hover:text-primary">{company.email}</a>
               </div>
             )}
-            {company.phone && (
-              <div className="flex items-center gap-2 text-[13px]">
-                <span className="material-symbols-outlined text-[15px] text-primary">call</span>
-                <a href={`tel:${company.phone}`} className="text-on-surface hover:text-primary">{company.phone}</a>
-              </div>
-            )}
           </div>
         )}
 
@@ -306,6 +322,80 @@ function CompanyCard({
 }: {
   company: any; index: number; onAnalyze: (c: any) => void; onSave: (c: any) => void;
 }) {
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [showAllEmails, setShowAllEmails] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent, val: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(val);
+    }
+    setCopiedText(val);
+    setTimeout(() => setCopiedText(null), 2000);
+  };
+
+  const invalidTlds = new Set(['we', 'png', 'jpg', 'jpeg', 'webp', 'svg', 'gif', 'test', 'local', 'internal']);
+  const rawEmails: string[] = (Array.isArray(company.all_emails) && company.all_emails.length > 0)
+    ? company.all_emails
+    : ((Array.isArray(company.emails) && company.emails.length > 0)
+      ? company.emails
+      : (company.email ? company.email.split(',').map((s: string) => s.trim()).filter(Boolean) : []));
+  const allEmails = Array.from(new Set(rawEmails)).filter(em => {
+    if (!em || !em.includes('@')) return false;
+    const parts = em.toLowerCase().split('@');
+    if (parts.length !== 2) return false;
+    const [user, domain] = parts;
+    const ext = domain.split('.').pop() || '';
+    if (invalidTlds.has(ext) || ext.length < 2 || ext.length > 10) return false;
+    if (user.length >= 5 && !/[aeiouy0-9]/.test(user)) return false;
+    return true;
+  });
+
+  // STRICT POLICY: Never inject fake/guessed emails. Only show real scraped emails.
+  // Generic departmental prefixes that are NOT decision-maker emails:
+  const GENERIC_PREFIXES = new Set(['info', 'contact', 'sales', 'support', 'hello', 'admin',
+    'enquiry', 'enquiries', 'help', 'noreply', 'no-reply', 'mail', 'office', 'team',
+    'general', 'hr', 'careers', 'jobs', 'press', 'media', 'billing', 'accounts', 'service', 'services']);
+
+  const isGenericEmail = (em: string) => {
+    const local = em.split('@')[0].toLowerCase().replace(/[^a-z]/g, '');
+    return Array.from(GENERIC_PREFIXES).some(p => local === p || local.startsWith(p));
+  };
+
+  // Separate personal/direct emails from generic departmental ones
+  const personalEmails = allEmails.filter(em => !isGenericEmail(em));
+  const genericEmails = allEmails.filter(em => isGenericEmail(em));
+
+  // Deduplicate generic emails by category prefix
+  const seenDeptCats = new Set<string>();
+  const deptCatMap: Record<string, string> = {
+    info: 'info', contact: 'contact', sales: 'sales', support: 'support', help: 'support',
+    hr: 'hr', careers: 'careers', jobs: 'careers', billing: 'billing', media: 'media', press: 'media', admin: 'admin', service: 'service'
+  };
+  const uniqueGenericEmails: string[] = [];
+  for (const em of genericEmails) {
+    const local = em.split('@')[0].toLowerCase().replace(/[^a-z]/g, '');
+    let matchedCat: string | null = null;
+    for (const [prefix, cat] of Object.entries(deptCatMap)) {
+      if (local === prefix || local.startsWith(prefix)) { matchedCat = cat; break; }
+    }
+    if (matchedCat) {
+      if (seenDeptCats.has(matchedCat)) continue;
+      seenDeptCats.add(matchedCat);
+    }
+    uniqueGenericEmails.push(em);
+  }
+
+  // displayEmails = personal first, then generic (only real scraped ones, NO injected fake emails)
+  const displayEmails = [...personalEmails, ...uniqueGenericEmails];
+  const hasPersonalEmail = personalEmails.length > 0;
+
+  const directDecisionMakers = (Array.isArray(company.decisionMakers) && company.decisionMakers.length > 0)
+    ? company.decisionMakers
+    : ((Array.isArray(company.decision_makers) && company.decision_makers.length > 0)
+      ? company.decision_makers
+      : []);
   return (
     <motion.div
       key={company.id}
@@ -407,7 +497,7 @@ function CompanyCard({
       )}
 
       {/* Contact details & Priority Display */}
-      <div className="flex flex-col gap-1.5 bg-surface-container-low rounded-xl px-3 py-2.5 border border-outline-variant/40">
+      <div className="flex flex-col gap-2 bg-surface-container-low rounded-xl px-3 py-2.5 border border-outline-variant/40">
         {company.isClientLead ? (
           <div className="flex flex-col gap-1 text-[12px]">
             <div className="flex items-center justify-between">
@@ -429,43 +519,199 @@ function CompanyCard({
                   rel="noreferrer"
                   className="font-semibold text-primary hover:underline"
                 >
-                  View Post & Reply →
+                  View Post & Reply &rarr;
                 </a>
               </div>
             )}
           </div>
         ) : (
           <>
-            {company.email ? (
-              /* Primary: EMAIL */
-              <div className="flex items-center justify-between gap-1.5 text-[12px] text-on-surface">
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="material-symbols-outlined text-[14px] text-primary flex-shrink-0">email</span>
-                  <a href={`mailto:${company.email.split(',')[0].trim()}`} className="font-medium text-primary hover:underline truncate">
-                    {company.email.split(',')[0].trim()}
-                  </a>
+            {/* Direct Decision Makers (CEO / Founder / Leadership) */}
+            {directDecisionMakers.length > 0 && (
+              <div className="flex flex-col gap-1.5 p-2 bg-indigo-50/70 border border-indigo-200/70 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10.5px] font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px] text-indigo-600">shield_person</span>
+                    Decision Maker & Leadership
+                  </span>
+                  <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-indigo-200/80 text-indigo-900">
+                    Direct Reach
+                  </span>
                 </div>
-                {company.verification_status === 'smtp_verified' ? (
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-1.5 py-0.2 rounded-md shrink-0 flex items-center gap-0.5" title="Strict Zero-Send SMTP Verified (250 OK)">
-                    <span className="material-symbols-outlined text-[11px] text-emerald-600">verified</span>
-                    SMTP Verified
-                  </span>
-                ) : company.emails && company.emails.length > 1 ? (
-                  <span className="text-[10.5px] bg-surface-container-high text-secondary px-1.5 py-0.5 rounded font-medium shrink-0">
-                    +{company.emails.length - 1} more
-                  </span>
-                ) : null}
+                {directDecisionMakers.slice(0, 3).map((dm: any, dmIdx: number) => (
+                  <div key={dmIdx} className="flex flex-col gap-1 bg-white rounded-lg p-2 border border-indigo-100/90 shadow-2xs">
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {(dm.name || 'DM').slice(0, 1).toUpperCase()}
+                        </span>
+                        <span className="font-semibold text-[12px] text-on-surface truncate">{dm.name}</span>
+                        {dm.role && (
+                          <span className="text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-medium truncate">
+                            {dm.role}
+                          </span>
+                        )}
+                      </div>
+                      {dm.linkedin && (
+                        <a
+                          href={dm.linkedin.startsWith('http') ? dm.linkedin : `https://${dm.linkedin}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 hover:text-blue-800 p-0.5 shrink-0"
+                          title="View LinkedIn Profile"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">link</span>
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Decision Maker Direct Email */}
+                    {dm.email && !isGenericEmail(dm.email) && (
+                      <div className="flex items-center justify-between gap-1 pt-1 border-t border-gray-100 text-[11px]">
+                        <div className="flex items-center gap-1 truncate">
+                          <span className="material-symbols-outlined text-[12px] text-emerald-600 shrink-0">mark_email_read</span>
+                          <a
+                            href={`mailto:${dm.email}`}
+                            className="text-primary font-medium hover:underline truncate"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {dm.email}
+                          </a>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className={`text-[9.5px] px-1.5 py-0.5 rounded font-medium border ${
+                            dm.badge === 'General Contact' || isGenericEmail(dm.email) ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                            dm.badge === 'Direct Reach / Verified' || dm.verification_status === 'smtp_verified' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            dm.badge === 'Likely (unverified)' || dm.verification_status === 'catch_all' ? 'bg-amber-50 text-amber-700 border-amber-300' :
+                            dm.verification_status === 'disclosed_verified' ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold' :
+                            dm.verification_status === 'mailboxlayer_verified' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                            'bg-indigo-50 text-indigo-700 border-indigo-200'
+                          }`}>
+                            {isGenericEmail(dm.email) ? 'General Contact' :
+                             dm.badge ? dm.badge :
+                             dm.verification_status === 'smtp_verified' ? 'Direct Reach / Verified' :
+                             dm.verification_status === 'catch_all' ? 'Likely (unverified)' :
+                             dm.verification_status === 'disclosed_verified' ? 'Verified Disclosed' :
+                             dm.verification_status === 'mailboxlayer_verified' ? 'API Verified' : 'Direct Reach'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopy(e, dm.email)}
+                            className="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-100 text-gray-700 hover:text-indigo-800 transition-colors flex items-center gap-0.5 text-[9.5px] font-medium"
+                            title="Copy direct email"
+                          >
+                            <span className="material-symbols-outlined text-[11px]">
+                              {copiedText === dm.email ? 'check' : 'content_copy'}
+                            </span>
+                            <span>{copiedText === dm.email ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Primary Email row - SMART EMAIL DISPLAY */}
+            {displayEmails.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-1.5 text-[12px] text-on-surface">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className={`material-symbols-outlined text-[14px] flex-shrink-0 ${hasPersonalEmail ? 'text-emerald-600' : 'text-amber-500'}`}>
+                      {hasPersonalEmail ? 'mark_email_read' : 'email'}
+                    </span>
+                    <a href={`mailto:${displayEmails[0]}`} className={`font-medium hover:underline truncate ${hasPersonalEmail ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {displayEmails[0]}
+                    </a>
+                    {!hasPersonalEmail && (
+                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+                        General Contact
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => handleCopy(e, displayEmails[0])}
+                      className="text-secondary hover:text-primary p-0.5 rounded transition-colors"
+                      title="Copy email"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">
+                        {copiedText === displayEmails[0] ? 'check' : 'content_copy'}
+                      </span>
+                    </button>
+                    {displayEmails.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowAllEmails(!showAllEmails);
+                        }}
+                        className="text-[10px] bg-primary/10 hover:bg-primary/20 text-primary px-1.5 py-0.5 rounded font-semibold flex items-center gap-0.5 transition-colors cursor-pointer"
+                      >
+                        <span>{showAllEmails ? 'Hide' : `+${displayEmails.length - 1} more`}</span>
+                        <span className="material-symbols-outlined text-[11px]">
+                          {showAllEmails ? 'expand_less' : 'expand_more'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expandable All Emails Dropdown */}
+                {showAllEmails && displayEmails.length > 1 && (
+                  <div className="pt-1.5 mt-0.5 border-t border-outline-variant/30 flex flex-col gap-1 bg-surface-container/60 p-2 rounded-lg">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-secondary">
+                      All Discovered Emails ({displayEmails.length})
+                    </span>
+                    {displayEmails.map((em: string, emIdx: number) => (
+                      <div key={emIdx} className="flex items-center justify-between text-[11px] bg-white rounded px-2 py-1 border border-outline-variant/30">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <span className={`material-symbols-outlined text-[11px] shrink-0 ${!isGenericEmail(em) ? 'text-emerald-600' : 'text-amber-500'}`}>
+                            {!isGenericEmail(em) ? 'mark_email_read' : 'mail'}
+                          </span>
+                          <a
+                            href={`mailto:${em}`}
+                            className={`hover:underline truncate max-w-[180px] ${!isGenericEmail(em) ? 'text-emerald-700 font-medium' : 'text-amber-700'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {em}
+                          </a>
+                          {isGenericEmail(em) ? (
+                            <span className="text-[8px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200 shrink-0">General Contact</span>
+                          ) : (
+                            <span className="text-[8px] font-semibold px-1 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">Direct Reach / Verified</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopy(e, em)}
+                          className="text-secondary hover:text-primary p-0.5 rounded transition-colors"
+                          title="Copy email"
+                        >
+                          <span className="material-symbols-outlined text-[11px]">
+                            {copiedText === em ? 'check' : 'content_copy'}
+                          </span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : company.phone ? (
-              /* Primary: PHONE */
+              /* Fallback: Show phone when no email found */
               <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
-                <span className="material-symbols-outlined text-[14px] text-emerald-600 flex-shrink-0">call</span>
-                <a href={`tel:${company.phone}`} className="font-medium text-emerald-700 hover:underline truncate">
+                <span className="material-symbols-outlined text-[14px] text-teal-600 flex-shrink-0">phone</span>
+                <a href={`tel:${company.phone}`} className="font-medium text-teal-700 hover:underline truncate">
                   {company.phone}
                 </a>
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200 shrink-0">
+                  Phone Only
+                </span>
               </div>
             ) : company.linkedin ? (
-              /* Primary: LINKEDIN (only when no email & no phone) */
               <div className="flex items-center gap-1.5 text-[12px] text-on-surface">
                 <span className="material-symbols-outlined text-[14px] text-blue-600 flex-shrink-0">link</span>
                 <a href={company.linkedin} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate font-medium">
@@ -475,7 +721,7 @@ function CompanyCard({
             ) : company.enriching ? (
               <div className="flex items-center gap-1.5 text-[11px] text-secondary italic">
                 <span className="material-symbols-outlined text-[13px] text-amber-500 animate-spin flex-shrink-0">sync</span>
-                <span>Scanning contacts (up to 30s)...</span>
+                <span>Scanning contacts &amp; leadership (up to 30s)...</span>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
@@ -484,37 +730,7 @@ function CompanyCard({
               </div>
             )}
 
-            {/* Decision Makers List (if discovered) */}
-            {((company.decisionMakers && company.decisionMakers.length > 0) || (company.decision_makers && company.decision_makers.length > 0)) && (
-              <div className="pt-1.5 mt-0.5 border-t border-outline-variant/40 flex flex-col gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-secondary flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[12px] text-primary">badge</span>
-                  Leadership & Decision Makers
-                </span>
-                {(company.decisionMakers || company.decision_makers).slice(0, 2).map((dm: any, dmIdx: number) => (
-                  <div key={dmIdx} className="flex items-center justify-between text-[11.5px] bg-surface-container/60 rounded-lg px-2 py-1 border border-outline-variant/30">
-                    <div className="flex items-center gap-1.5 truncate">
-                      <span className="font-semibold text-on-surface truncate">{dm.name}</span>
-                      <span className="text-[10px] text-secondary truncate">({dm.role})</span>
-                    </div>
-                    {dm.email && (
-                      <span className={`text-[9.5px] font-medium px-1.5 py-0.5 rounded shrink-0 flex items-center gap-0.5 ${
-                        dm.verification_status === 'smtp_verified'
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                          : 'bg-blue-100 text-blue-800 border border-blue-200'
-                      }`}>
-                        <span className="material-symbols-outlined text-[10px]">
-                          {dm.verification_status === 'smtp_verified' ? 'verified' : 'mail'}
-                        </span>
-                        {dm.verification_status === 'smtp_verified' ? 'Verified' : 'MX Valid'}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Website link — minimal, clean */}
+            {/* Website link */}
             {company.website && (
               <div className="pt-1 mt-0.5 border-t border-outline-variant/30 flex items-center gap-1 text-[11px] text-secondary">
                 <span className="material-symbols-outlined text-[12px] text-gray-400">language</span>
@@ -523,6 +739,7 @@ function CompanyCard({
                   target="_blank"
                   rel="noreferrer"
                   className="text-secondary hover:text-primary hover:underline truncate"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {company.domain || company.displayUrl}
                 </a>
@@ -531,7 +748,6 @@ function CompanyCard({
           </>
         )}
       </div>
-
 
       {/* Meta row */}
       <div className="flex items-center justify-between text-[12px] text-secondary">
@@ -658,7 +874,23 @@ function mergeCompanyLists(existing: Company[], incoming: Company[]): Company[] 
     const key = (c.domain || c.website || c.id || c.name || '').toLowerCase().trim();
     if (key) {
       const prev = map.get(key);
-      map.set(key, { ...(prev || {}), ...c });
+      if (prev) {
+        map.set(key, {
+          ...c,
+          ...prev,
+          email: prev.email || c.email,
+          phone: prev.phone || c.phone,
+          phones: (prev.phones && prev.phones.length > 0) ? prev.phones : (c.phones || []),
+          emails: (prev.emails && prev.emails.length > 0) ? prev.emails : (c.emails || []),
+          all_emails: (prev.all_emails && prev.all_emails.length > 0) ? prev.all_emails : (c.all_emails || []),
+          decisionMakers: (prev.decisionMakers && prev.decisionMakers.length > 0) ? prev.decisionMakers : (c.decisionMakers || []),
+          decision_makers: (prev.decision_makers && prev.decision_makers.length > 0) ? prev.decision_makers : (c.decision_makers || []),
+          enriched: prev.enriched || c.enriched,
+          saved: prev.saved || c.saved,
+        });
+      } else {
+        map.set(key, c);
+      }
     }
   }
   return Array.from(map.values());
@@ -749,6 +981,59 @@ export default function DiscoverPage() {
     } finally {
       setSuggestLoading(false);
     }
+  }, [suggestInput]);
+
+  // Real-time instant & debounced suggestions as user types in the suggestInput box
+  useEffect(() => {
+    const q = suggestInput.trim();
+    if (q.length < 2) return;
+
+    const abortController = new AbortController();
+
+    // 1. Instant 0ms suggestions from local mapping
+    fetch(`/api/suggest-industries?q=${encodeURIComponent(q)}`, {
+      signal: abortController.signal
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.suggestions?.length > 0) {
+          setSuggestions(data.suggestions);
+          setQuickTags(data.suggestions.map((s: IndustrySuggestion) => s.industry));
+        }
+      })
+      .catch(() => {});
+
+    // 2. Debounced AI-powered deep suggestion (600ms pause)
+    const timer = setTimeout(async () => {
+      setSuggestLoading(true);
+      try {
+        const res = await fetch('/api/suggest-industries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: q }),
+          signal: abortController.signal
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const fetchedSuggestions = data.suggestions || [];
+          if (fetchedSuggestions.length > 0) {
+            setSuggestions(fetchedSuggestions);
+            setQuickTags(fetchedSuggestions.map((s: IndustrySuggestion) => s.industry));
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          // ignore background abort
+        }
+      } finally {
+        setSuggestLoading(false);
+      }
+    }, 600);
+
+    return () => {
+      clearTimeout(timer);
+      abortController.abort();
+    };
   }, [suggestInput]);
 
   const handleToggleIndustry = useCallback((industryName: string) => {
@@ -891,11 +1176,19 @@ export default function DiscoverPage() {
               const newPhones = (Array.isArray(data.phones) && data.phones.length > 0) ? data.phones : [];
               const finalPhone = newPhones.length > 0 ? newPhones[0] : c.phone;
               const linkedinCompany = data.linkedin_company || data.linkedinUrl || c.linkedin;
+              const directDecisionMakers = (Array.isArray(data.decision_makers) && data.decision_makers.length > 0)
+                ? data.decision_makers
+                : (c.decisionMakers || c.decision_makers || []);
 
               const updatedComp: Company = {
                 ...c,
                 email: finalEmail,
+                emails: newEmails.length > 0 ? newEmails : (c.emails || []),
+                all_emails: newEmails.length > 0 ? newEmails : (c.all_emails || []),
                 phone: finalPhone,
+                phones: newPhones.length > 0 ? newPhones : (c.phones || []),
+                decisionMakers: directDecisionMakers,
+                decision_makers: directDecisionMakers,
                 linkedin: linkedinCompany || c.linkedin,
                 contactSource: data.contact_page_url ? {
                   url: data.contact_page_url,
@@ -919,9 +1212,10 @@ export default function DiscoverPage() {
                     trustScore: updatedComp.trustScore,
                     status: 'Pending',
                     email: updatedComp.email || null,
-                    phone: updatedComp.phone || null,
-                    phones: data.phones || [],
-                    linkedin: updatedComp.linkedin || null,
+                    emails: updatedComp.all_emails?.length ? updatedComp.all_emails : (updatedComp.emails || []),
+                    decisionMakers: updatedComp.decisionMakers || updatedComp.decision_makers || [],
+                    decision_makers: updatedComp.decisionMakers || updatedComp.decision_makers || [],
+                    linkedin_company: updatedComp.linkedin || null,
                     contactSource: updatedComp.contactSource || null,
                     logoUrl: updatedComp.logoUrl || null,
                     searchQuery: lastKeyword || keyword || null,
@@ -1027,6 +1321,9 @@ export default function DiscoverPage() {
           // Completed or cancelled
           setLoading(false);
           setStreamProgress(null);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('discovery_state_changed'));
+          }
           if (data.status === 'completed') {
             setToast({
               message: `Discovery finished! Found ${data.found_count || data.companies?.length || 0} qualified prospects.`,
@@ -1055,6 +1352,9 @@ export default function DiscoverPage() {
       setLoading(false);
       setStreamProgress(null);
       setToast({ message: 'Discovery search stopped.', type: 'error' });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('discovery_state_changed'));
+      }
     } catch (e) {
       console.error('[Discover] Cancel failed:', e);
     }
@@ -1066,7 +1366,10 @@ export default function DiscoverPage() {
     setError(null);
     setErrorFix(null);
     setCompanies([]);
-    setStreamProgress(null);
+    setStreamProgress({ found: 0, target: 10, page: 1, active: true });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('discovery_state_changed'));
+    }
     enqueuedIds.current = new Set();  // Reset enrichment queue for fresh search
 
     let nextPage = 1;
@@ -1157,6 +1460,9 @@ export default function DiscoverPage() {
                 } else if (event.type === 'done' || event.type === 'complete') {
                   setStreamProgress(null);
                   setLoading(false);
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('discovery_state_changed'));
+                  }
                 }
               } catch {
                 // Non-JSON line — skip silently
@@ -1271,9 +1577,11 @@ export default function DiscoverPage() {
           trustScore: company.trustScore,
           relevanceReason: relevanceReason || null,
           status: 'Pending',
-          email: company.email || null,
-          phone: company.phone || null,
-          linkedin: company.linkedin || null,
+          email: company.email || (company.all_emails?.[0]) || (company.emails?.[0]) || null,
+          emails: company.all_emails?.length ? company.all_emails : (company.emails?.length ? company.emails : []),
+          decisionMakers: company.decisionMakers?.length ? company.decisionMakers : (company.decision_makers?.length ? company.decision_makers : []),
+          decision_makers: company.decisionMakers?.length ? company.decisionMakers : (company.decision_makers?.length ? company.decision_makers : []),
+          linkedin_company: company.linkedin || null,
           contactSource: company.contactSource || null,
           logoUrl: company.logoUrl || null,
           searchQuery: lastKeyword || keyword || null,

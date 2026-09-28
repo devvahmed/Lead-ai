@@ -360,7 +360,8 @@ async def _autonomous_harvesting_daemon(company_id: int):
                     pass
 
                 # Gate 4: Contact Extraction
-                contacts = extract_regex_contacts(scraped_text or cand.snippet or "", url)
+                cand_snippet = getattr(cand, "snippet", None) or getattr(cand, "text_content", "") or ""
+                contacts = extract_regex_contacts(scraped_text or cand_snippet, url)
                 found_emails = contacts.get("emails", [])
                 found_phones = contacts.get("phones", [])
                 primary_email = found_emails[0] if found_emails else None

@@ -32,6 +32,7 @@ from smtp_verify import (
     verify_email_smtp as standalone_verify_email_smtp,
     apply_smtp_policy,
     batch_verify_emails,
+    get_email_tier_and_badge,
 )
 
 logger = logging.getLogger("contact_enricher_pro")
@@ -313,35 +314,60 @@ DEPARTMENTAL_DISPLAY_ORDER = [
     'info', 'contact', 'sales', 'support', 'hr', 'careers', 'billing', 'media', 'marketing', 'legal', 'admin'
 ]
 
-GENERIC_EMAIL_PREFIXES: Set[str] = {
-    'info', 'contact', 'contactus', 'sales', 'support', 'hello', 'admin', 'office',
-    'press', 'inquiries', 'help', 'media', 'team', 'jobs', 'careers',
-    'hr', 'marketing', 'legal', 'privacy', 'billing', 'accounts',
-    'service', 'services', 'mail', 'webmaster', 'general', 'enquiries',
-    'enquiry', 'inquiry', 'customer', 'customercare', 'accounting',
-    'finance', 'recruitment', 'recruiting', 'talent', 'business', 'bd', 'helpdesk',
-    'noreply', 'no-reply', 'donotreply', 'orders', 'order', 'operations', 'ops'
+GENERIC_LOCAL_PARTS: Set[str] = {
+    'info', 'sales', 'support', 'contact', 'admin', 'help', 'helpdesk',
+    'careers', 'jobs', 'hr', 'billing', 'accounts', 'marketing', 'press',
+    'media', 'enquiries', 'inquiries', 'hello', 'team', 'office', 'mail',
+    'email', 'general', 'feedback', 'service', 'customerservice',
+    'customer.service', 'sales-support', 'sales_support', 'supportus',
+    'support-us', 'support_us', 'supportuk', 'support-uk', 'us', 'uk',
+    'eu', 'apac', 'emea', 'noreply', 'no-reply', 'donotreply', 'webmaster',
+    'postmaster', 'abuse', 'security', 'privacy', 'legal', 'compliance',
+    'partners', 'partnerships', 'affiliates', 'wholesale', 'orders',
+    'returns', 'shipping', 'techsupport', 'tech-support', 'it', 'devops',
+    'engineering', 'product', 'products', 'newsletter', 'subscribe'
 }
+GENERIC_EMAIL_PREFIXES = GENERIC_LOCAL_PARTS
 
 
 def is_generic_email(email: str) -> bool:
-    """
-    Returns True if the email is a generic departmental/inbox email (info@, sales@, etc.)
-    and therefore MUST NOT be presented as a decision maker's direct personal email.
-    """
+    """Returns True if the email is a role-based/generic inbox, not a person."""
     if not email or '@' not in email:
         return True
     local = email.split('@')[0].lower().strip()
-    local_clean = re.sub(r'[^a-z]', '', local)
-    if local in GENERIC_EMAIL_PREFIXES or local_clean in GENERIC_EMAIL_PREFIXES:
+    
+    # Strip HTML entities like u003e (e.g. u003esupport -> support)
+    local_clean = re.sub(r'u00[0-9a-f]{2}', '', local)
+    normalized = re.sub(r'[^a-z]', '', local_clean)
+
+    # 1. Direct match in generic parts or departmental categories
+    if local in GENERIC_LOCAL_PARTS or local_clean in GENERIC_LOCAL_PARTS or normalized in GENERIC_LOCAL_PARTS:
         return True
-    if local in DEPARTMENTAL_CATEGORIES or local_clean in DEPARTMENTAL_CATEGORIES:
+    if local in DEPARTMENTAL_CATEGORIES or local_clean in DEPARTMENTAL_CATEGORIES or normalized in DEPARTMENTAL_CATEGORIES:
         return True
-    for prefix in GENERIC_EMAIL_PREFIXES:
-        if local.startswith(f"{prefix}-") or local.startswith(f"{prefix}_") or local.startswith(f"{prefix}."):
+
+    # 2. Check if local contains delimiters separating role parts (e.g., sales.support, info-us, it_help)
+    parts = re.split(r'[-_.]', local_clean)
+    for part in parts:
+        part_norm = re.sub(r'[^a-z]', '', part)
+        if part in GENERIC_LOCAL_PARTS or part_norm in GENERIC_LOCAL_PARTS:
             return True
-        if local_clean == prefix or (local_clean.startswith(prefix) and len(local_clean) <= len(prefix) + 3):
-            return True
+
+    # 3. Prefixes/suffixes with generic roles (minimum length 4 to avoid 2-letter substrings matching names)
+    for generic in GENERIC_LOCAL_PARTS:
+        generic_norm = re.sub(r'[^a-z]', '', generic)
+        if not generic_norm:
+            continue
+        if len(generic_norm) <= 3:
+            # 2-3 letter abbreviations (it, hr, pr, qa) must be exact match or delimited
+            if normalized == generic_norm:
+                return True
+        else:
+            # Longer generic words (support, sales, contact, billing, admin, office, general, service)
+            # Match if normalized starts with it (e.g. supportus, saleshelp) or ends with it
+            if normalized.startswith(generic_norm) or normalized.endswith(generic_norm) or generic_norm in normalized:
+                return True
+
     return False
 
 
@@ -357,6 +383,11 @@ def classify_email(email: str, known_dm_names: Optional[List[Dict[str, str]]] = 
 
     local = email.split('@')[0].lower().strip()
     local_clean = re.sub(r'[^a-z]', '', local)
+
+    # 0. Strict Generic Email Check (Bug #4 Fix)
+    if is_generic_email(email):
+        cat = DEPARTMENTAL_CATEGORIES.get(local, DEPARTMENTAL_CATEGORIES.get(local_clean, 'general'))
+        return 'departmental', cat
 
     # 1. Exact or stripped matches in canonical departmental dict
     if local in DEPARTMENTAL_CATEGORIES:
@@ -811,12 +842,14 @@ def extract_email_pattern(email: str, known_names: Optional[List[Dict[str, str]]
     """
     Reverse-engineers the company's authentic corporate email schema from a known real email.
     Evaluates syntax (dots, underscores, initials) and cross-checks known leadership names.
-    Returns standard pattern tokens: 'first.last', 'flast', 'f.last', 'first_last', 'first', etc.
+    Returns standard pattern tokens: 'first.last', 'flast', 'f.last', 'first_last', etc.
     """
     if not email or '@' not in email:
         return None
+    if is_generic_email(email):
+        return None
     local = email.split('@')[0].lower().strip()
-    if local in GENERIC_ROLE_PREFIXES or len(local) < 2:
+    if len(local) < 2:
         return None
 
     # 1. Match against known executive/employee names
@@ -871,11 +904,8 @@ def extract_email_pattern(email: str, known_names: Optional[List[Dict[str, str]]
         if len(parts) == 2 and len(parts[0]) > 1 and len(parts[1]) > 1:
             return "first-last"
 
-    # Single-word name heuristic
-    if len(local) >= 3 and not any(c in local for c in '._-'):
-        return "first"
-
-    return "first.last"
+    # Do not fabricate pattern for arbitrary strings without known names
+    return None
 
 
 def synthesize_by_pattern(first_name: str, last_name: str, domain: str, pattern: str) -> Optional[str]:
@@ -933,8 +963,12 @@ def find_domain_anchor_pattern(
         local, em_dom = parts
         if em_dom != clean_domain and not em_dom.endswith('.' + clean_domain):
             continue
-        if local in GENERIC_ROLE_PREFIXES:
+
+        # CRITICAL FIX (Bug #1): Reject generic anchors
+        if is_generic_email(em):
+            logger.info(f"[AnchorStrategy] SKIP generic anchor: {em}")
             continue
+
         if not is_valid_email_syntax(em, domain=clean_domain):
             continue
 
@@ -1393,114 +1427,76 @@ async def find_decision_makers(company_name: str, domain: str, website_text: str
     if len(people) >= 2:
         return people
 
-    # Step 1.8: Fast Direct Live Executive Search on Yahoo (Sub-second high-precision discovery)
+    # Step 2: SearXNG Optimized Decision-Maker Queries (5 Templates)
+    searxng_dm_templates = [
+        f'"{clean_company}" "CEO" OR "Founder" OR "Managing Director" site:linkedin.com/in/',
+        f'"{clean_company}" "VP" OR "Director" site:linkedin.com/in/',
+        f'"{clean_company}" "Head of" site:linkedin.com/in/',
+        f'"{clean_company}" leadership team OR executives',
+        f'"{clean_company}" contact email "CEO" OR "Founder"'
+    ]
+
+    leadership_hits_found = False
+
     if clean_company and len(clean_company) >= 2:
-        try:
-            import urllib.parse
-            import httpx as py_httpx
-            headers_y = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
-            y_queries = [
-                f'"{clean_company}" CEO',
-                f'"{clean_company}" (CEO OR founder OR "managing director" OR chairman)'
-            ]
-            for y_q in y_queries:
-                y_url = 'https://search.yahoo.com/search?p=' + urllib.parse.quote(y_q)
-                def _fetch_y():
-                    return py_httpx.get(y_url, headers=headers_y, follow_redirects=True, timeout=5.0)
-                r_y = await asyncio.to_thread(_fetch_y)
-                if r_y.status_code == 200:
-                    h3_blocks = re.findall(r'<h3[^>]*>(.*?)</h3>', r_y.text, re.DOTALL)
-                    for block in h3_blocks:
-                        m_u = re.search(r'href="([^"]+)"', block)
-                        href = m_u.group(1) if m_u else ""
-                        real_url = href
-                        m_r = re.search(r'/RU=([^/]+)/', href)
-                        if m_r:
-                            try:
-                                real_url = urllib.parse.unquote(m_r.group(1))
-                            except Exception:
-                                pass
-
-                        raw_text = html.unescape(re.sub(r'<[^>]+>', '', block)).replace('\u200e', '').replace('\u200f', '').strip()
-                        parts = re.split(r'\s*[-–|:]\s*', raw_text)
-                        if len(parts) >= 2:
-                            cand_name = parts[0].strip()
-                            cand_role = parts[1].strip()
-
-                            if any(k in cand_role.lower() for k in ('ceo', 'chief executive', 'founder', 'director', 'chairman', 'president', 'manager', 'partner', 'owner')):
-                                name_words = cand_name.split()
-                                if 2 <= len(name_words) <= 4 and all(w[0].isupper() or w.lower() in ('de', 'van', 'von', 'al', 'bin', 'el') for w in name_words if w):
-                                    cn_lower = clean_company.lower()
-                                    n_lower = cand_name.lower()
-                                    if cn_lower not in n_lower and n_lower not in cn_lower and n_lower not in seen_names:
-                                        if not any(w.lower() in ('group', 'company', 'materials', 'solutions', 'contracting', 'store', 'home', 'holding', 'limited', 'llc', 'fze', 'portal', 'official') for w in name_words):
-                                            seen_names.add(n_lower)
-                                            role_clean = re.sub(r'\s+(?:at|@|for|in|\|)\s+.*$', '', cand_role, flags=re.IGNORECASE).strip()
-                                            people.append({
-                                                "name": cand_name,
-                                                "first_name": name_words[0],
-                                                "last_name": name_words[-1],
-                                                "role": role_clean[:50] or "Executive / Leadership",
-                                                "linkedin_url": real_url if "linkedin.com" in real_url else "",
-                                                "source": "live_executive_search"
-                                            })
-                if people:
-                    break
-        except Exception as y_err:
-            logger.debug(f"[Live Executive Search] Yahoo exception: {y_err}")
-
-    if people:
-        return people
-
-    # Step 2: Clean external search dorking with high-precision natural queries
-    if clean_company and len(clean_company) >= 2:
-        queries = [
-            f'{clean_company} CEO founder leadership linkedin',
-            f'{clean_company} executive director linkedin'
-        ]
-
-        for query in queries:
+        for query in searxng_dm_templates:
             try:
                 from discover import search_searxng_or_ddg
                 results = await asyncio.wait_for(search_searxng_or_ddg(query, page=1), timeout=8.0)
             except Exception as e:
-                logger.debug(f"[Decision Maker Dork] Search failed: {e}")
+                logger.debug(f"[SearXNG DM Search] Query failed '{query}': {e}")
                 results = []
 
             for r in (results or [])[:12]:
+                url = r.get("url") or ""
                 raw_title = r.get("title") or ""
                 title = html.unescape(raw_title)
-                title = re.sub(r'\s*\|\s*LinkedIn.*$', '', title, flags=re.IGNORECASE).strip()
                 title = re.sub(r'[\u200e\u200f]', '', title)
-                url = r.get("url") or ""
+                clean_t = re.sub(r'\s*\|\s*LinkedIn.*$', '', title, flags=re.IGNORECASE).strip()
 
-                is_relevant = "linkedin.com/in/" in url.lower() or any(
-                    k in title.lower() for k in (
-                        'ceo', 'founder', 'director', 'president', 'owner', 'partner', 'managing',
-                        'principal', 'chief', 'operations manager', 'director of operations',
-                        'operations director', 'vp', 'vice president', 'chairman', 'executive', 'general manager',
-                        'representative director', 'representative'
-                    )
-                )
-                if not is_relevant:
-                    continue
-
-                # Parse executive title
-                m_meet = re.search(r'Meet the Team:\s*([A-Za-z\s]+),\s*([^-\.]+)', title, re.IGNORECASE)
+                is_li = "linkedin.com/in/" in url.lower()
                 cand_name, cand_role = None, None
-                if m_meet:
-                    cand_name = m_meet.group(1).strip()
-                    cand_role = m_meet.group(2).strip()
-                else:
-                    segments = re.split(r'\s*[-–—|:]\s*', title)
+
+                # 1. Parse LinkedIn in/ URLs
+                if is_li:
+                    leadership_hits_found = True
+                    # Parse from title: e.g. "John Doe - Chief Executive Officer - Acme | LinkedIn"
+                    segments = re.split(r'\s*[-–—|:]\s*', clean_t)
                     if len(segments) >= 2:
                         cand_name = segments[0].strip()
                         cand_role = segments[1].strip()
                         cand_role = re.sub(rf'\s+(?:at|@|for|in|\|)\s+.*$', '', cand_role, flags=re.IGNORECASE).strip()
 
+                    # Fallback to URL slug: e.g. linkedin.com/in/john-doe-12345
+                    if not cand_name or len(cand_name.split()) < 2:
+                        m_slug = re.search(r'linkedin\.com/in/([^/?#]+)', url, re.IGNORECASE)
+                        if m_slug:
+                            slug = m_slug.group(1).strip()
+                            slug = re.sub(r'[-_][0-9a-fA-F]{4,}$', '', slug)
+                            slug = re.sub(r'[-_]\d+$', '', slug)
+                            slug_parts = [w.capitalize() for w in re.split(r'[-_]', slug) if w.isalpha() and len(w) >= 2]
+                            if 2 <= len(slug_parts) <= 4:
+                                cand_name = " ".join(slug_parts)
+                                if not cand_role:
+                                    cand_role = "Executive / Leadership"
+
+                # 2. Parse Non-LinkedIn corporate / team pages
+                elif any(k in title.lower() for k in ('ceo', 'founder', 'director', 'president', 'owner', 'partner', 'managing', 'vp', 'vice president', 'chairman', 'executive', 'general manager')):
+                    leadership_hits_found = True
+                    m_meet = re.search(r'Meet the Team:\s*([A-Za-z\s]+),\s*([^-\.]+)', title, re.IGNORECASE)
+                    if m_meet:
+                        cand_name = m_meet.group(1).strip()
+                        cand_role = m_meet.group(2).strip()
+                    else:
+                        segments = re.split(r'\s*[-–—|:]\s*', clean_t)
+                        if len(segments) >= 2:
+                            cand_name = segments[0].strip()
+                            cand_role = segments[1].strip()
+                            cand_role = re.sub(rf'\s+(?:at|@|for|in|\|)\s+.*$', '', cand_role, flags=re.IGNORECASE).strip()
+
                 if cand_name and cand_role:
                     parts = cand_name.split()
-                    if 2 <= len(parts) <= 4 and all(p[0].isupper() or p.lower() in ('de', 'van', 'von', 'del', 'filho') for p in parts if p):
+                    if 2 <= len(parts) <= 4 and all(p[0].isupper() or p.lower() in ('de', 'van', 'von', 'del', 'filho', 'al', 'bin') for p in parts if p):
                         cn_lower = clean_company.lower()
                         n_lower = cand_name.lower()
                         if n_lower not in seen_names and n_lower not in cn_lower and cn_lower not in n_lower:
@@ -1514,11 +1510,15 @@ async def find_decision_makers(company_name: str, domain: str, website_text: str
                                     "last_name": parts[-1],
                                     "role": role_str,
                                     "linkedin_url": url if "linkedin.com" in url else "",
-                                    "source": "linkedin_dork"
+                                    "source": "searxng_linkedin" if is_li else "searxng_dork"
                                 })
 
-            if people:
+            if len(people) >= 3:
                 break
+
+    # Part D: If SearXNG returns 0 leadership/linkedin hits, log clearly
+    if not people:
+        logger.info(f"[SearXNG] No leadership hits for {clean_company} — decision makers not found via search")
 
     return people
 
@@ -1535,7 +1535,20 @@ async def verify_synthesized_email(
     or if verified on authentic MX infrastructure with catch-all tagging.
     """
     if not mx_records:
-        return {"deliverable": False, "status": "rejected_no_mx", "email": email}
+        return {"deliverable": False, "status": "rejected_no_mx", "email": email, "tier": "personal", "badge": "Dropped"}
+
+    # Bug #4 Fix: Generic emails must NEVER be treated as personal / executive verified
+    if is_generic_email(email):
+        return {
+            "deliverable": False,
+            "status": "generic_departmental",
+            "email": email,
+            "confidence": "zero",
+            "verified": False,
+            "tier": "departmental",
+            "badge": "General Contact",
+            "source": "generic_rejected"
+        }
 
     # Step 1: Mailboxlayer API Verification
     mbl_res = await verify_via_mailboxlayer(email)
@@ -1549,6 +1562,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "high",
             "verified": True,
+            "tier": "personal",
+            "badge": "Direct Reach / Verified",
             "source": "mailboxlayer_api"
         }
     elif mbl_res.get("status") in ("mailboxlayer_mailbox_not_found", "mailbox_not_found"):
@@ -1558,6 +1573,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "zero",
             "verified": False,
+            "tier": None,
+            "badge": "Dropped",
             "source": "mailboxlayer_api"
         }
     elif is_catch_all:
@@ -1567,6 +1584,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "low",
             "verified": False,
+            "tier": "personal",
+            "badge": "Likely (unverified)",
             "source": "catch_all_policy"
         }
 
@@ -1579,6 +1598,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "low",
             "verified": False,
+            "tier": "personal",
+            "badge": "Likely (unverified)",
             "mx_host": best_mx
         }
 
@@ -1594,6 +1615,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "high",
             "verified": True,
+            "tier": "personal",
+            "badge": "Direct Reach / Verified",
             "mx_host": detected_mx,
             "source": "smtp_canary_handshake"
         }
@@ -1604,6 +1627,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "low",
             "verified": False,
+            "tier": "personal",
+            "badge": "Likely (unverified)",
             "mx_host": detected_mx
         }
     elif status in ("invalid", "invalid_mx") or code in (550, 551, 552, 553, 554):
@@ -1613,6 +1638,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "zero",
             "verified": False,
+            "tier": None,
+            "badge": "Dropped",
             "mx_host": detected_mx
         }
     else:
@@ -1622,6 +1649,8 @@ async def verify_synthesized_email(
             "email": email,
             "confidence": "low",
             "verified": False,
+            "tier": "personal",
+            "badge": "Unverified",
             "mx_host": detected_mx
         }
 
@@ -1686,6 +1715,7 @@ async def enrich_company_contacts_advanced(
         if em and '@' in em
         and is_valid_email_syntax(em, domain=clean_domain, check_mx=True)
         and email_belongs_to_company(em, clean_domain)
+        and not is_generic_email(em)
     ]
     anchor_email, detected_pattern = find_domain_anchor_pattern(
         clean_domain,
@@ -1762,6 +1792,23 @@ async def enrich_company_contacts_advanced(
 
         # STRICT ZERO-TOLERANCE POLICY: If no authentic personal email found, leave email as None!
         # NEVER invent permuted emails or accept false SMTP 250 codes without canary proof.
+        # Bug #4: Ensure decision maker email cannot be generic
+        if best_dm_email and is_generic_email(best_dm_email):
+            logger.info(f"[DecisionMaker] Rejected generic email for {full_name}: {best_dm_email}")
+            best_dm_email = None
+            best_dm_status = "unverified"
+            is_strictly_verified = False
+
+        dm_tier = "personal" if best_dm_email else "departmental"
+        if not best_dm_email:
+            dm_badge = "Unverified"
+        elif is_strictly_verified:
+            dm_badge = "Direct Reach / Verified"
+        elif is_catch_all:
+            dm_badge = "Likely (unverified)"
+        else:
+            dm_badge = "Direct Reach"
+
         verified_stakeholders.append({
             "name": full_name,
             "first_name": f_name,
@@ -1773,7 +1820,9 @@ async def enrich_company_contacts_advanced(
             "strictly_verified": is_strictly_verified,
             "is_catch_all": is_catch_all,
             "mx_host": best_mx,
-            "anchor_pattern": detected_pattern
+            "anchor_pattern": detected_pattern,
+            "tier": dm_tier,
+            "badge": dm_badge
         })
 
     # 5. Dual-Tier Email Categorization & Direct Reach Priority
@@ -1801,10 +1850,10 @@ async def enrich_company_contacts_advanced(
 
     discovered_personal = list(dict.fromkeys(discovered_personal))
 
-    # Collect authentic departmental candidate inboxes
+    # Collect authentic departmental candidate inboxes (Tier 2)
     candidate_dept_emails = [
         em for em in raw_discovered
-        if em and '@' in em and classify_email(em.strip().lower())[0] == 'departmental'
+        if em and '@' in em and (is_generic_email(em.strip().lower()) or classify_email(em.strip().lower())[0] == 'departmental')
     ]
 
     # Deduplicate departmental inboxes strictly to ONE per functional prefix
@@ -1819,6 +1868,18 @@ async def enrich_company_contacts_advanced(
         discovered_personal + 
         deduped_dept_emails
     ))
+
+    # Build structured metadata with tier & badge for each email
+    email_metadata: List[Dict[str, Any]] = []
+    for em in all_emails:
+        b_info = get_email_tier_and_badge(
+            em,
+            smtp_status="valid" if em in dm_emails else ("catch_all" if is_catch_all else "unknown"),
+            is_catch_all=is_catch_all,
+            is_generic=is_generic_email(em)
+        )
+        if b_info:
+            email_metadata.append(b_info)
 
     # Primary Email: Direct Decision Maker is ALWAYS #1 Priority
     primary_email = None
@@ -1838,6 +1899,7 @@ async def enrich_company_contacts_advanced(
         "personal_emails": dm_emails + discovered_personal,
         "footprint_emails": footprint_emails,
         "decision_makers": verified_stakeholders,
+        "email_metadata": email_metadata,
         "has_mx": bool(mx_records),
         "is_catch_all": is_catch_all,
         "mx_host": best_mx,

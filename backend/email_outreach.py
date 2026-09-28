@@ -596,7 +596,8 @@ def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 4) 
                     "STRICTLY EXCLUDE: careers, jobs, blog, news, press, events, products, services, pricing, case studies.\n"
                     'Return ONLY a valid JSON array of selected URLs. Example: ["https://...", "https://..."]'
                 )
-                ai_res = call_llm(prompt, temperature=0.1, max_tokens=150, timeout=3.0, domain_tag="DynamicNavAI")
+                nav_timeout = float(os.getenv("OLLAMA_TIMEOUT", "30.0"))
+                ai_res = call_llm(prompt, temperature=0.1, max_tokens=150, timeout=nav_timeout, domain_tag="DynamicNavAI")
                 if ai_res:
                     # Try JSON parse first, then regex fallback
                     extracted_urls: List[str] = []

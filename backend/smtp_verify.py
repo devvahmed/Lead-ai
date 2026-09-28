@@ -61,6 +61,20 @@ PORT_25_BLOCK_TTL = 600
 _DOMAIN_RATE: Dict[str, float] = {}
 
 
+# --- Generic Email Checker Helper --------------------------------------------
+def _is_generic(email: str) -> bool:
+    if not email or "@" not in email:
+        return False
+    try:
+        from contact_enricher_pro import is_generic_email
+        return is_generic_email(email)
+    except Exception:
+        local = email.split("@")[0].lower().strip()
+        local_clean = re.sub(r'[^a-z]', '', local)
+        common = {'info', 'sales', 'support', 'contact', 'admin', 'help', 'billing', 'team', 'service', 'inquiries'}
+        return any(c in local_clean for c in common)
+
+
 # --- Result Schema -----------------------------------------------------------
 def _make_result(
     email: str,
@@ -73,6 +87,26 @@ def _make_result(
     mx_host: Optional[str] = None,
     error: Optional[str] = None,
 ) -> Dict[str, Any]:
+    generic = _is_generic(email)
+    if generic:
+        # BUG #4 FIX: Generic emails must NEVER receive "Verified" or "Direct Reach"
+        tier = "departmental"
+        badge = "General Contact"
+        verified = False
+    else:
+        tier = "personal"
+        if status == "valid":
+            badge = "Direct Reach / Verified"
+        elif status == "catch_all" or is_catch_all:
+            badge = "Likely (unverified)"
+            verified = False
+        elif status in ("invalid", "invalid_mx"):
+            badge = "Dropped"
+            verified = False
+        else:
+            badge = "Unverified"
+            verified = False
+
     return {
         "email":        email,
         "status":       status,
@@ -83,6 +117,9 @@ def _make_result(
         "is_catch_all": is_catch_all,
         "mx_host":      mx_host,
         "error":        error,
+        "tier":         tier,
+        "badge":        badge,
+        "is_generic":   generic,
     }
 
 
@@ -345,6 +382,79 @@ def apply_smtp_policy(result: Dict[str, Any]) -> Optional[str]:
         logger.info(f"[SMTP Policy] Dropping {email!r} — {status}")
         return None
     return email or None
+
+
+def get_email_tier_and_badge(
+    email: str,
+    smtp_status: str = "unknown",
+    is_catch_all: bool = False,
+    is_generic: Optional[bool] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Enforces Bug #4 Tier and Badge assignment according to SMTP verification and generic status:
+      - Generic email (info@, sales@, support@, etc.):
+          tier="departmental" (Tier 2), badge="General Contact"
+      - Personal email + valid:
+          tier="personal" (Tier 1), badge="Direct Reach / Verified"
+      - Personal email + catch_all:
+          tier="personal" (Tier 1 flagged), badge="Likely (unverified)"
+      - Personal email + invalid / invalid_mx:
+          DROPPED -> returns None
+    """
+    if not email or "@" not in email:
+        return None
+
+    clean_email = email.strip().lower()
+    if is_generic is None:
+        is_generic = _is_generic(clean_email)
+
+    if is_generic:
+        return {
+            "email": clean_email,
+            "tier": "departmental",
+            "tier_num": 2,
+            "badge": "General Contact",
+            "badge_color": "amber",
+            "verified": False,
+            "smtp_status": smtp_status
+        }
+
+    status_clean = (smtp_status or "").lower()
+    if status_clean in ("invalid", "invalid_mx", "mailbox_not_found"):
+        return None
+
+    if status_clean == "valid":
+        return {
+            "email": clean_email,
+            "tier": "personal",
+            "tier_num": 1,
+            "badge": "Direct Reach / Verified",
+            "badge_color": "green",
+            "verified": True,
+            "smtp_status": "valid"
+        }
+
+    if status_clean == "catch_all" or is_catch_all:
+        return {
+            "email": clean_email,
+            "tier": "personal",
+            "tier_num": 1,
+            "badge": "Likely (unverified)",
+            "badge_color": "amber",
+            "verified": False,
+            "is_catch_all": True,
+            "smtp_status": "catch_all"
+        }
+
+    return {
+        "email": clean_email,
+        "tier": "personal",
+        "tier_num": 1,
+        "badge": "Likely (unverified)" if is_catch_all else "Direct Reach",
+        "badge_color": "blue",
+        "verified": False,
+        "smtp_status": status_clean or "unknown"
+    }
 
 
 # --- CLI Quick-Test ----------------------------------------------------------

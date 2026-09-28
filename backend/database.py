@@ -89,6 +89,8 @@ def init_db():
             email TEXT,
             phone TEXT,
             phones TEXT,
+            emails_json TEXT,
+            decision_makers_json TEXT,
             linkedin_company TEXT,
             contact_source_url TEXT,
             contact_source_page TEXT,
@@ -104,6 +106,8 @@ def init_db():
         ("email", "TEXT"),
         ("phone", "TEXT"),
         ("phones", "TEXT"),
+        ("emails_json", "TEXT"),
+        ("decision_makers_json", "TEXT"),
         ("linkedin_company", "TEXT"),
         ("contact_source_url", "TEXT"),
         ("contact_source_page", "TEXT"),
@@ -633,9 +637,33 @@ def get_dashboard_stats(company_id: int):
         conn.close()
 
 
+def _enrich_client_row(r_dict: dict) -> dict:
+    """Helper to parse JSON fields (emails_json, decision_makers_json) into python lists."""
+    if not r_dict:
+        return r_dict
+    import json
+    if r_dict.get("emails_json"):
+        try:
+            parsed = json.loads(r_dict["emails_json"])
+            if isinstance(parsed, list):
+                r_dict["emails"] = parsed
+                r_dict["all_emails"] = parsed
+        except Exception:
+            pass
+    if r_dict.get("decision_makers_json"):
+        try:
+            parsed = json.loads(r_dict["decision_makers_json"])
+            if isinstance(parsed, list):
+                r_dict["decision_makers"] = parsed
+                r_dict["decisionMakers"] = parsed
+        except Exception:
+            pass
+    return r_dict
+
+
 def save_client(name, website=None, industry=None, country=None, trust_score=0,
                 relevance_reason=None, status="Pending", email=None, phone=None,
-                phones=None, linkedin_company=None, contact_source_url=None,
+                phones=None, emails_json=None, decision_makers_json=None, linkedin_company=None, contact_source_url=None,
                 contact_source_page=None, contact_source_label=None,
                 contact_source_context=None, logo_url=None, search_query=None, company_id=1):
     """Saves or updates a client record in SQLite DB (deduplicated) and returns dict."""
@@ -664,6 +692,8 @@ def save_client(name, website=None, industry=None, country=None, trust_score=0,
                 email=email,
                 phone=phone,
                 phones=phones,
+                emails_json=emails_json,
+                decision_makers_json=decision_makers_json,
                 linkedin_company=linkedin_company,
                 contact_source_url=contact_source_url,
                 contact_source_page=contact_source_page,
@@ -677,18 +707,18 @@ def save_client(name, website=None, industry=None, country=None, trust_score=0,
         cursor.execute("""
             INSERT INTO clients (
                 company_id, name, website, industry, country, trust_score,
-                relevance_reason, status, email, phone, phones, linkedin_company,
+                relevance_reason, status, email, phone, phones, emails_json, decision_makers_json, linkedin_company,
                 contact_source_url, contact_source_page, contact_source_label,
                 contact_source_context, logo_url, search_query, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (company_id, name, website, industry, country, trust_score,
-              relevance_reason, status, email, phone, phones, linkedin_company,
+              relevance_reason, status, email, phone, phones, emails_json, decision_makers_json, linkedin_company,
               contact_source_url, contact_source_page, contact_source_label,
               contact_source_context, logo_url, search_query, created_at))
         conn.commit()
         client_id = cursor.lastrowid
         row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
-        return dict(row) if row else None
+        return _enrich_client_row(dict(row)) if row else None
     finally:
         conn.close()
 
@@ -701,7 +731,7 @@ def get_clients(company_id=1):
         rows = cursor.execute(
             "SELECT * FROM clients WHERE company_id = ? ORDER BY id DESC", (company_id,)
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_enrich_client_row(dict(r)) for r in rows]
     finally:
         conn.close()
 
@@ -718,7 +748,7 @@ def get_client_by_id(client_id, company_id=1):
             row = cursor.execute(
                 "SELECT * FROM clients WHERE id = ?", (client_id,)
             ).fetchone()
-        return dict(row) if row else None
+        return _enrich_client_row(dict(row)) if row else None
     finally:
         conn.close()
 
@@ -730,7 +760,8 @@ def update_client(client_id, company_id=1, **kwargs):
     try:
         allowed = [
             "name", "website", "industry", "country", "trust_score", "relevance_reason",
-            "status", "email", "phone", "phones", "linkedin_company", "contact_source_url",
+            "status", "email", "phone", "phones", "emails_json", "decision_makers_json",
+            "linkedin_company", "contact_source_url",
             "contact_source_page", "contact_source_label", "contact_source_context", "logo_url", "search_query"
         ]
         updates = []
@@ -741,7 +772,7 @@ def update_client(client_id, company_id=1, **kwargs):
                 values.append(val)
         if not updates:
             row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
-            return dict(row) if row else None
+            return _enrich_client_row(dict(row)) if row else None
 
         values.append(client_id)
         sql = f"UPDATE clients SET {', '.join(updates)} WHERE id = ?"
@@ -749,7 +780,7 @@ def update_client(client_id, company_id=1, **kwargs):
         conn.commit()
 
         row = cursor.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
-        return dict(row) if row else None
+        return _enrich_client_row(dict(row)) if row else None
     finally:
         conn.close()
 

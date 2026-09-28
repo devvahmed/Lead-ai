@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from auth_routes import get_current_company
+from auth_routes import get_current_company, get_current_company_optional
 from auth_models import Company
 
 discover_router = APIRouter()
@@ -460,7 +460,7 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     # ── Attempt 1: SearXNG (try both common ports) ────────────────────────────
     searxng_url = os.getenv("SEARXNG_URL", "http://127.0.0.1:8085")
     searxng_urls_to_try = []
-    for u in [searxng_url, "http://127.0.0.1:8085", "http://localhost:8085", "http://127.0.0.1:8080", "http://localhost:8080"]:
+    for u in [searxng_url]:
         if u not in searxng_urls_to_try:
             searxng_urls_to_try.append(u)
     print(f"[Discover Search] ── SearXNG Attempt ──────────────────────────────")
@@ -480,40 +480,58 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
             print(f"[Discover Search] SearXNG port {port} at {host} is OPEN — sending request")
             _all_providers_tried += 1
 
-            params = urllib.parse.urlencode({
-                "q": query, "format": "json", "pageno": page, "language": "en"
-            })
-            full_url = f"{s_url}/search?{params}"
-            req = urllib.request.Request(
-                full_url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
+            # 3-Tier SearXNG Search Strategy:
+            # 1. Primary: google,bing
+            # 2. Fallback: duckduckgo,brave
+            # 3. Last Resort: startpage,qwant
+            searxng_tiers = [
+                ("google,bing", "Primary"),
+                ("duckduckgo,brave", "Fallback"),
+                ("startpage,qwant", "Last Resort"),
+            ]
             loop = asyncio.get_event_loop()
 
-            def _fetch_searxng(r=req, url=full_url):
-                try:
-                    with urllib.request.urlopen(r, timeout=5.0) as resp:
-                        status = resp.status
-                        raw_bytes = resp.read()
-                        print(f"[Discover Search] SearXNG HTTP status={status}, raw_bytes={len(raw_bytes)} for url={url}")
-                        if status == 200:
-                            data = json.loads(raw_bytes.decode('utf-8'))
-                            hits = data.get('results', [])
-                            print(f"[Discover Search] SearXNG parsed {len(hits)} result(s) from response")
-                            return hits
-                        print(f"[Discover Search] SearXNG non-200 status {status} — no results")
-                        return []
-                except Exception as inner_e:
-                    print(f"[Discover Search] SearXNG fetch exception: {type(inner_e).__name__}: {inner_e}")
-                    return []
+            for engines_param, tier_label in searxng_tiers:
+                params = urllib.parse.urlencode({
+                    "q": query, "format": "json", "pageno": page, "language": "en", "engines": engines_param
+                })
+                full_url = f"{s_url}/search?{params}"
+                req = urllib.request.Request(
+                    full_url,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
+                )
 
-            res = await loop.run_in_executor(None, _fetch_searxng)
-            if res:
-                print(f"[Discover Search] ✓ SearXNG SUCCESS: {len(res)} results from {s_url}")
-                results = res
+                def _fetch_searxng(r=req, url=full_url):
+                    try:
+                        with urllib.request.urlopen(r, timeout=8.0) as resp:
+                            status = resp.status
+                            raw_bytes = resp.read()
+                            if status == 200:
+                                data = json.loads(raw_bytes.decode('utf-8'))
+                                return data.get('results', [])
+                            return []
+                    except Exception as inner_e:
+                        print(f"[Discover Search] SearXNG ({tier_label}) fetch exception: {type(inner_e).__name__}: {inner_e}")
+                        return []
+
+                tier_res = await loop.run_in_executor(None, _fetch_searxng)
+                if tier_res:
+                    is_leadership_q = any(k in query.lower() for k in ('linkedin', 'founder', 'ceo', 'director', 'leadership', 'president'))
+                    if is_leadership_q:
+                        has_relevant = any(
+                            'linkedin.com' in (item.get('url') or '').lower() or
+                            any(k in (item.get('title') or '').lower() for k in ('ceo', 'founder', 'director', 'president', 'leadership'))
+                            for item in tier_res
+                        )
+                        if not has_relevant:
+                            print(f"[Discover Search] SearXNG ({tier_label}) returned {len(tier_res)} hits without leadership/linkedin -- trying next tier")
+                            continue
+                    print(f"[Discover Search] ✓ SearXNG SUCCESS ({tier_label}: {engines_param}): {len(tier_res)} results from {s_url}")
+                    results = tier_res
+                    break
+
+            if results:
                 break
-            else:
-                print(f"[Discover Search] SearXNG at {s_url} returned 0 results for query='{query}'")
         except Exception as e:
             print(f"[Discover Search] SearXNG {s_url} outer exception: {type(e).__name__}: {e}")
             continue
@@ -521,7 +539,13 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     if results:
         return results
 
-    # ── Attempt 2: Bing Live Web Search (with browser cookies & official form params) ──
+    # Gate Bing/Yahoo behind USE_BING_FALLBACK (default: False)
+    use_bing = os.getenv("USE_BING_FALLBACK", "false").lower() in ("true", "1")
+    if not use_bing:
+        print(f"[Discover Search] Bing/Yahoo fallback disabled (USE_BING_FALLBACK=false).")
+        return results or []
+
+    # ── Attempt 2: Bing Live Web Search (Optional via USE_BING_FALLBACK) ──
     print(f"[Discover Search] ── Bing Live Search (Free & Organic) ──")
     print(f"[Discover Search] Query sent to Bing: '{query}' (page={page})")
     _all_providers_tried += 1
@@ -552,7 +576,9 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
                     first_val = (page - 1) * 10 + 1
                     b_resp = client.get("https://www.bing.com/search", params={"q": query, "form": "QBLH", "first": first_val})
                     if b_resp.status_code == 200:
-                        matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
+                        matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)(?=<li[^>]*class="[^"]*b_algo|</ul>|</ol>|$)', b_resp.text, re.DOTALL)
+                        if not matches:
+                            matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
                         items = []
                         for item in matches:
                             target_u = ""
@@ -566,7 +592,7 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
                                     target_u = "https://" + c_u if not c_u.startswith("http") else c_u
                             
                             dom = clean_domain(target_u)
-                            is_site_query = "site:" in query.lower()
+                            is_site_query = "site:" in query.lower() or "linkedin" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
                             if target_u.startswith("http") and dom and len(target_u) > 10 and (is_site_query or dom not in EXCLUDE_DOMAINS):
                                 if is_site_query or not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
                                     m_t = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
@@ -592,8 +618,19 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
 
         bing_items = await loop.run_in_executor(None, _fetch_bing_live)
         if bing_items:
-            print(f"[Discover Search] ✓ Bing SUCCESS: {len(bing_items)} organic corporate results")
-            return bing_items
+            # Relevance verification gate: Ensure Bing didn't return bot-shield junk
+            # (e.g. "Events in Karachi", "Convert JPG to PDF", generic consumer portals)
+            q_words = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', query) if w.lower() not in ('and', 'the', 'for', 'with', 'from', 'site', 'linkedin')]
+            relevant_items = []
+            for b_it in bing_items:
+                combined_text = (b_it.get("title", "") + " " + b_it.get("snippet", "") + " " + b_it.get("url", "")).lower()
+                if not q_words or any(qw in combined_text for qw in q_words):
+                    relevant_items.append(b_it)
+            if len(relevant_items) >= 1:
+                print(f"[Discover Search] ✓ Bing SUCCESS: {len(relevant_items)} relevant corporate results")
+                return relevant_items
+            else:
+                print(f"[Discover Search] Bing returned {len(bing_items)} results but 0 matched query keywords '{q_words[:4]}' (bot protection detected) — falling back to Yahoo/DDG")
     except Exception as e:
         print(f"[Discover Search] Bing outer exception: {e}")
 
@@ -643,8 +680,9 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
                         snippet = py_html.unescape(snippet)
 
                         dom = clean_domain(target_url)
-                        if target_url.startswith("http") and dom and len(target_url) > 10 and dom not in EXCLUDE_DOMAINS:
-                            if not any(x in dom for x in ('yahoo.', 'yimg.', 'bing.', 'microsoft.', 'google.', 'facebook.', 'twitter.', 'instagram.', 'linkedin.', 'youtube.', 'wikipedia.')):
+                        is_li_query = "linkedin" in query.lower() or "site:" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
+                        if target_url.startswith("http") and dom and len(target_url) > 10 and (is_li_query or dom not in EXCLUDE_DOMAINS):
+                            if is_li_query or not any(x in dom for x in ('yahoo.', 'yimg.', 'bing.', 'microsoft.', 'google.', 'facebook.', 'twitter.', 'instagram.', 'youtube.', 'wikipedia.')):
                                 items.append({
                                     "url": target_url,
                                     "title": title or dom.split('.')[0].capitalize(),
@@ -679,11 +717,12 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
                 with DDGS(timeout=8.0) as ddgs:
                     raw_res = list(ddgs.text(query, backend="lite", max_results=10))
                     items = []
+                    is_li_q = "linkedin" in query.lower() or "site:" in query.lower()
                     for r in raw_res:
                         u = r.get("href", "")
                         dom = clean_domain(u)
-                        if u.startswith("http") and dom and len(u) > 10 and dom not in EXCLUDE_DOMAINS:
-                            if not any(x in dom for x in ('youtube.', 'wikipedia.', 'microsoft.', 'google.')):
+                        if u.startswith("http") and dom and len(u) > 10 and (is_li_q or dom not in EXCLUDE_DOMAINS):
+                            if is_li_q or not any(x in dom for x in ('youtube.', 'wikipedia.', 'microsoft.', 'google.')):
                                 items.append({
                                     "url": u,
                                     "title": r.get("title", "") or dom.split('.')[0].capitalize(),
@@ -1302,6 +1341,10 @@ def generate_industry_search_queries(
     is_explicit_agency = any(w in ind_lower for w in [
         "marketing agency", "creative agency", "digital agency", "ad agency", "seo agency", "pr agency"
     ])
+    is_manufacturing_industrial = any(w in ind_lower for w in [
+        "processing", "packaging", "manufacturing", "industrial", "machinery",
+        "factory", "production", "plant", "contract pack", "oem", "automation"
+    ])
 
     if is_ecommerce:
         deterministic_queries = [
@@ -1313,6 +1356,15 @@ def generate_industry_search_queries(
             f"beauty cosmetics brand online store{loc_suffix}",
             f"home lifestyle goods online store{loc_suffix}",
             f"ecommerce retail stores buy products{loc_suffix}"
+        ]
+    elif is_manufacturing_industrial:
+        deterministic_queries = [
+            f"{clean_industry} manufacturing plants{loc_suffix}",
+            f"{clean_industry} industrial packaging company{loc_suffix}",
+            f"{clean_industry} contract packaging manufacturer{loc_suffix}",
+            f"{clean_industry} processing facility plant{loc_suffix}",
+            f"{clean_industry} OEM equipment manufacturing{loc_suffix}",
+            f"{clean_industry} production facility operations{loc_suffix}"
         ]
     elif is_healthcare:
         deterministic_queries = [
@@ -1599,6 +1651,9 @@ async def stream_discovery(
             print(f"\n[Discover] ✅ Target goal of {target_count} companies reached! Stopping discovery loop.")
             break
 
+        if current_page > start_page:
+            await asyncio.sleep(1.0)
+
         active_query = query_variations[variation_idx % len(query_variations)]
 
         print(f"\n[Discover] ─── Step {current_page} (Goal: {qualified_total}/{target_count}) | Subpage: {query_subpage} | Query: '{active_query}' ───")
@@ -1820,20 +1875,21 @@ async def stream_discovery(
                                 ev_source_label = "search snippet only"
                                 print(f"[Scrape] {domain} — failed: {type(scrape_err).__name__}: {scrape_err}")
 
-                        # ── Multi-Tier Deterministic & Semantic Junk Firewall (Step 3) ──
+                        # ── Multi-Tier Deterministic Junk Firewall (Layer 1: Fast 0ms Gate) ──
                         is_snippet_only = not bool(scraped or item.get("raw_html", ""))
                         is_firewall_junk, firewall_reason = await run_junk_firewall(
                             url=url,
                             domain=domain,
                             html_content=item.get("raw_html", ""),
                             text_content=scraped or snippet,
-                            is_search_snippet=is_snippet_only
+                            is_search_snippet=is_snippet_only,
+                            use_llm=False
                         )
                         if is_firewall_junk:
                             print(f"[Junk Firewall] 🛡️ REJECTED: {domain} ({url[:80]}) | {firewall_reason}")
                             return None
 
-                        # ── Strict Local Entity & Country Lock Engine (Step 4) ──
+                        # ── Strict Local Entity & Country Lock Engine (Layer 2: Deterministic Geo) ──
                         if clean_country:
                             is_valid_geo, geo_reason = await run_geo_lock_engine(
                                 domain=domain,
@@ -1841,7 +1897,7 @@ async def stream_discovery(
                                 html_content=item.get("raw_html", ""),
                                 text_content=scraped or snippet,
                                 target_country=clean_country,
-                                use_llm=True
+                                use_llm=False
                             )
                             if not is_valid_geo:
                                 print(f"[Geo-Lock] 🚫 REJECTED: {domain} ({url[:80]}) | {geo_reason}")
@@ -1853,13 +1909,13 @@ async def stream_discovery(
                                 "evidence_type": "tld" if any(domain.endswith(t) for t in ('.pk', '.uk', '.co.uk', '.de', '.ae', '.ca', '.au', '.in', '.fr')) else "address_or_llm"
                             }
 
-                        # ── Strict Buyer Intent & Non-Job Contract Classifier (Step 5) ──
+                        # ── Strict Buyer Intent & Non-Job Contract Classifier (Layer 3: Deterministic Intent) ──
                         is_valid_buyer, intent_type, intent_reason = await run_intent_classifier(
                             title=title,
                             text_content=scraped or snippet,
                             target_service=services_context or clean_keyword,
                             is_intent_source=is_intent_source,
-                            use_llm=True
+                            use_llm=False
                         )
                         if not is_valid_buyer:
                             print(f"[Intent Filter] 🚫 REJECTED: {domain} ({url[:80]}) | [{intent_type}] {intent_reason}")
@@ -1950,7 +2006,7 @@ async def stream_discovery(
 
                     from email_outreach import extract_regex_contacts, fetch_dedicated_contact_emails
                     scraped_text_for_contacts = scraped if scraped else f"{title} {snippet}"
-                    contacts_extracted = extract_regex_contacts(scraped_text_for_contacts, url)
+                    contacts_extracted = extract_regex_contacts(scraped_text_for_contacts, url, target_domain=domain)
 
                     found_emails = contacts_extracted.get("emails", [])
                     found_phones = contacts_extracted.get("phones", [])
@@ -1984,23 +2040,36 @@ async def stream_discovery(
                                     domain=domain,
                                     company_name=company_name,
                                     existing_emails=found_emails,
-                                    timeout=7.0
+                                    website_text=scraped or snippet,
+                                    timeout=14.0
                                 ),
-                                timeout=8.0
+                                timeout=15.0
                             )
                             decision_makers = pro_intel.get("decision_makers", [])
                             footprint_emails = pro_intel.get("footprint_emails", [])
                             if pro_intel.get("all_emails"):
-                                found_emails = list(dict.fromkeys(found_emails + pro_intel["all_emails"]))
-                            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
-                            if strict_dm and strict_dm.get("email"):
-                                primary_email = strict_dm["email"]
-                                print(f"[ContactEnricherPro] 🎯 Verified leadership inbox for {domain}: {primary_email} ({strict_dm.get('name')} - {strict_dm.get('role')})")
-                            elif not primary_email and pro_intel.get("primary_email"):
+                                found_emails = pro_intel["all_emails"]
+                            if pro_intel.get("primary_email"):
                                 primary_email = pro_intel["primary_email"]
-                                print(f"[ContactEnricherPro] 🎯 Verified footprint/domain email for {domain}: {primary_email}")
+                                print(f"[ContactEnricherPro] 🎯 Selected primary inbox for {domain}: {primary_email}")
+                            elif decision_makers:
+                                best_dm = next((dm for dm in decision_makers if dm.get("email") and dm.get("strictly_verified")), None)
+                                if best_dm and best_dm.get("email"):
+                                    primary_email = best_dm["email"]
+                                    print(f"[ContactEnricherPro] 🎯 Direct leadership inbox for {domain}: {primary_email} ({best_dm.get('name')} - {best_dm.get('role')})")
                         except Exception as pro_err:
                             logger.debug(f"[ContactEnricherPro] Skipped for {domain}: {pro_err}")
+
+                    # Ensure primary executive email is at top of found_emails
+                    if primary_email and found_emails:
+                        found_emails = [primary_email] + [e for e in found_emails if e != primary_email]
+
+                    # Strict Authenticity Policy: Only retain emails actually discovered on website or strictly verified.
+                    # Zero fabricated info@ or contact@ fallbacks.
+                    if not found_emails:
+                        primary_email = None
+                    elif not primary_email and found_emails:
+                        primary_email = found_emails[0]
 
                     # ── Service-Agnostic Operational Bottleneck Audit Engine (Step 7) ──
                     try:
@@ -2403,7 +2472,7 @@ discovery_manager = DiscoveryJobManager()
 # ─── Status & Cancel Endpoints (JWT Protected) ──────────────────────────────
 @discover_router.get("/discover-companies/status")
 async def get_discover_status(
-    current_company: Company = Depends(get_current_company)
+    current_company: Company = Depends(get_current_company_optional)
 ):
     company_id = getattr(current_company, "id", 1) or 1
     job = discovery_manager.get_job(company_id)
@@ -2439,7 +2508,7 @@ async def get_discover_status(
 
 @discover_router.post("/discover-companies/cancel")
 async def cancel_discover(
-    current_company: Company = Depends(get_current_company)
+    current_company: Company = Depends(get_current_company_optional)
 ):
     company_id = getattr(current_company, "id", 1) or 1
     stopped = await discovery_manager.cancel_job(company_id)
@@ -2450,7 +2519,7 @@ async def cancel_discover(
 @discover_router.post("/discover-companies")
 async def post_discover_companies(
     req: DiscoverRequest,
-    current_company: Company = Depends(get_current_company)
+    current_company: Company = Depends(get_current_company_optional)
 ):
     if not req.keyword or not req.keyword.strip():
         raise HTTPException(status_code=400, detail="Keyword is required.")
@@ -2529,7 +2598,7 @@ async def get_discover_companies(
     discovery_mode: Optional[str] = Query("hybrid"),
     reset_cursor: Optional[bool] = Query(False),
     clearCache: Optional[bool] = Query(False),
-    current_company: Company = Depends(get_current_company)
+    current_company: Company = Depends(get_current_company_optional)
 ):
     if not keyword or not keyword.strip():
         raise HTTPException(status_code=400, detail="Keyword is required.")

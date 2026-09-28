@@ -29,6 +29,7 @@ import xml.etree.ElementTree as ET
 from typing import Optional, Dict, Any, List, Set, Tuple
 
 import httpx
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 # ─── Logging Setup ────────────────────────────────────────────────────────────
@@ -267,6 +268,111 @@ def get_dynamic_subreddits(target_service: str, query: str = "") -> List[str]:
     return result
 
 
+# ─── Worker 0: DuckDuckGo Zero-Cost Search & Fallback Scraper ─────────────────
+async def fetch_duckduckgo_async(
+    query: str,
+    page: int = 1,
+    client: Optional[httpx.AsyncClient] = None
+) -> List[RawLeadCandidate]:
+    """
+    Robust Zero-Cost Fallback Scraper using DuckDuckGo:
+    1. First tries duckduckgo_search (DDGS) in an asynchronous executor.
+    2. Seamlessly falls back to DuckDuckGo Lite endpoint (https://lite.duckduckgo.com/lite/)
+       to ensure continuous non-blocking candidate retrieval without CAPTCHAs.
+    """
+    candidates: List[RawLeadCandidate] = []
+    seen_domains: Set[str] = set()
+
+    # 1. Attempt using duckduckgo_search (DDGS)
+    try:
+        def _call_ddgs():
+            from duckduckgo_search import DDGS
+            with DDGS(timeout=7.0) as ddgs:
+                return list(ddgs.text(query, max_results=10))
+
+        raw_ddg = await asyncio.to_thread(_call_ddgs)
+        if raw_ddg:
+            for item in raw_ddg:
+                u = item.get("href", "")
+                dom = clean_domain_str(u)
+                title = clean_text_content(item.get("title", ""))
+                body = clean_text_content(item.get("body", ""))
+                if u.startswith("http") and dom and dom not in GENERIC_PLATFORMS and dom not in seen_domains:
+                    seen_domains.add(dom)
+                    candidates.append(RawLeadCandidate(
+                        source="searxng",
+                        title=title or dom.split('.')[0].capitalize(),
+                        text_content=body or f"Commercial business site for {dom}",
+                        url=u,
+                        author_or_company=extract_company_from_title(title) or dom.split('.')[0].capitalize(),
+                        raw_domain=dom,
+                        priority_rank=1,
+                        raw_metadata={"engine": "ddgs_library"}
+                    ))
+            if candidates:
+                logger.info(f"[DDG Fallback] ✓ Fetched {len(candidates)} candidates via duckduckgo_search library")
+                return candidates
+    except Exception as ddgs_err:
+        logger.debug(f"[DDG Fallback] DDGS library exception: {ddgs_err}")
+
+    # 2. Resilient Fallback to DuckDuckGo Lite Endpoint
+    own_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=TIMEOUT_SECONDS, headers={"User-Agent": DEFAULT_USER_AGENT})
+        own_client = True
+
+    try:
+        s_offset = (page - 1) * 30
+        ddg_headers = {
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Referer": "https://lite.duckduckgo.com/",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        ddg_resp = await client.post(
+            "https://lite.duckduckgo.com/lite/",
+            data={"q": query, "s": str(s_offset)},
+            headers=ddg_headers,
+            timeout=7.0
+        )
+        if ddg_resp.status_code == 200:
+            soup = BeautifulSoup(ddg_resp.text, "html.parser")
+            links = soup.find_all("a", class_="result-link")
+            snippets = soup.find_all("td", class_="result-snippet")
+            for idx, a_tag in enumerate(links):
+                raw_href = a_tag.get("href", "")
+                if "uddg=" in raw_href:
+                    m_u = re.search(r'uddg=([^&]+)', raw_href)
+                    target_u = urllib.parse.unquote(m_u.group(1)) if m_u else raw_href
+                else:
+                    target_u = raw_href
+
+                dom = clean_domain_str(target_u)
+                title = clean_text_content(a_tag.get_text())
+                snippet = clean_text_content(snippets[idx].get_text()) if idx < len(snippets) else ""
+
+                if target_u.startswith("http") and dom and dom not in GENERIC_PLATFORMS and dom not in seen_domains:
+                    seen_domains.add(dom)
+                    candidates.append(RawLeadCandidate(
+                        source="searxng",
+                        title=title or dom.split('.')[0].capitalize(),
+                        text_content=snippet or f"Commercial business site for {dom}",
+                        url=target_u,
+                        author_or_company=extract_company_from_title(title) or dom.split('.')[0].capitalize(),
+                        raw_domain=dom,
+                        priority_rank=1,
+                        raw_metadata={"engine": "ddg_lite_html"}
+                    ))
+            if candidates:
+                logger.info(f"[DDG Fallback] ✓ Fetched {len(candidates)} candidates via DDG Lite endpoint")
+    except Exception as lite_err:
+        logger.debug(f"[DDG Fallback] DDG Lite exception: {lite_err}")
+    finally:
+        if own_client:
+            await client.aclose()
+
+    return candidates
+
+
 # ─── Worker 1: SearXNG Engine ─────────────────────────────────────────────────
 async def fetch_searxng_async(
     query: str,
@@ -312,7 +418,8 @@ async def fetch_searxng_async(
                     "q": query,
                     "format": "json",
                     "pageno": page,
-                    "language": "en"
+                    "language": "en",
+                    "engines": "google,bing"
                 }
                 search_url = f"{base_url.rstrip('/')}/search"
                 resp = await client.get(search_url, params=params, timeout=5.0)
@@ -360,75 +467,92 @@ async def fetch_searxng_async(
         if not candidates:
             seen_domains = set()
 
-            # 1. Engine 1: Bing Live Search (Clean session cookies, no corrupting cc param)
+            # 1. Engine 1: DuckDuckGo Robust Zero-Cost Fallback (DDGS library + Lite endpoint)
             try:
-                logger.info(f"[Multi-Engine Search] Querying Bing Live Search for query='{query}' (page={page})")
-                bing_headers = {
-                    "User-Agent": DEFAULT_USER_AGENT,
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Cookie": "SRCHHPGUSR=SRCHLANG=en; _EDGE_S=mkt=en-us;"
-                }
-                # Initialize session with market set
-                await client.get("https://www.bing.com/?setmkt=en-US&setlang=en", headers=bing_headers)
-                first = (page - 1) * 10 + 1
-                b_params = {
-                    "q": query,
-                    "form": "QBLH",
-                    "first": first
-                }
-
-                b_resp = await client.get("https://www.bing.com/search", params=b_params, headers=bing_headers)
-                if b_resp.status_code == 200:
-                    matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
-                    bing_count = 0
-                    for item in matches:
-                        url = ""
-                        m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
-                        if m_u:
-                            u_param = m_u.group(1)
-                            if u_param.startswith("a1"):
-                                b64 = u_param[2:]
-                                b64 += "=" * ((4 - len(b64) % 4) % 4)
-                                try:
-                                    import base64
-                                    url = base64.b64decode(b64).decode('utf-8', errors='ignore')
-                                except Exception:
-                                    url = ""
-                        if not url:
-                            m_direct = re.search(r'<cite>([^<]+)</cite>', item)
-                            if m_direct:
-                                c_url = m_direct.group(1).strip()
-                                if not c_url.startswith("http"):
-                                    c_url = "https://" + c_url
-                                url = c_url
-
-                        m_title = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
-                        title = re.sub(r'<[^>]+>', '', m_title.group(1)).strip() if m_title else ""
-                        title = html.unescape(title).replace('\u200e', '').replace('\u200f', '')
-
-                        m_snip = re.search(r'<div[^>]*class="b_caption"[^>]*><p[^>]*>(.*?)</p>', item, re.DOTALL)
-                        snippet = re.sub(r'<[^>]+>', '', m_snip.group(1)).strip() if m_snip else ""
-                        snippet = html.unescape(snippet).replace('\u200e', '').replace('\u200f', '')
-
-                        d = clean_domain_str(url)
-                        if url.startswith("http") and d and len(url) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
+                logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Fallback for query='{query}' (page={page})")
+                ddg_leads = await fetch_duckduckgo_async(query=query, page=page, client=client)
+                if ddg_leads:
+                    for d_cand in ddg_leads:
+                        d = d_cand.raw_domain
+                        if d and d not in seen_domains:
                             seen_domains.add(d)
-                            candidates.append(RawLeadCandidate(
-                                source="searxng",
-                                title=title or d.split('.')[0].capitalize(),
-                                text_content=snippet or f"Commercial business site for {d}",
-                                url=url,
-                                author_or_company=extract_company_from_title(title) or d.split('.')[0].capitalize(),
-                                raw_domain=d,
-                                priority_rank=1,
-                                raw_metadata={"engine": "bing_live"}
-                            ))
-                            bing_count += 1
-                    if bing_count:
-                        logger.info(f"[Multi-Engine Search] ✓ Bing fetched {bing_count} corporate candidates")
-            except Exception as bing_err:
-                logger.debug(f"[Multi-Engine Search] Bing exception: {bing_err}")
+                            d_cand.source = "searxng"
+                            candidates.append(d_cand)
+                    logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo yielded {len(candidates)} corporate candidates")
+            except Exception as ddg_err:
+                logger.debug(f"[Multi-Engine Search] DuckDuckGo fallback error: {ddg_err}")
+
+            # 2. Engine 2: Bing Live Search (Optional, gated by USE_BING_FALLBACK)
+            use_bing = os.getenv("USE_BING_FALLBACK", "false").lower() in ("true", "1")
+            if use_bing:
+                try:
+                    logger.info(f"[Multi-Engine Search] Querying Bing Live Search for query='{query}' (page={page})")
+                    bing_headers = {
+                        "User-Agent": DEFAULT_USER_AGENT,
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Cookie": "SRCHHPGUSR=SRCHLANG=en; _EDGE_S=mkt=en-us;"
+                    }
+                    # Initialize session with market set
+                    await client.get("https://www.bing.com/?setmkt=en-US&setlang=en", headers=bing_headers)
+                    first = (page - 1) * 10 + 1
+                    b_params = {
+                        "q": query,
+                        "form": "QBLH",
+                        "first": first
+                    }
+
+                    b_resp = await client.get("https://www.bing.com/search", params=b_params, headers=bing_headers)
+                    if b_resp.status_code == 200:
+                        matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
+                        bing_count = 0
+                        for item in matches:
+                            url = ""
+                            m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
+                            if m_u:
+                                u_param = m_u.group(1)
+                                if u_param.startswith("a1"):
+                                    b64 = u_param[2:]
+                                    b64 += "=" * ((4 - len(b64) % 4) % 4)
+                                    try:
+                                        import base64
+                                        url = base64.b64decode(b64).decode('utf-8', errors='ignore')
+                                    except Exception:
+                                        url = ""
+                            if not url:
+                                m_direct = re.search(r'<cite>([^<]+)</cite>', item)
+                                if m_direct:
+                                    c_url = m_direct.group(1).strip()
+                                    if not c_url.startswith("http"):
+                                        c_url = "https://" + c_url
+                                    url = c_url
+
+                            m_title = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
+                            title = re.sub(r'<[^>]+>', '', m_title.group(1)).strip() if m_title else ""
+                            title = html.unescape(title).replace('\u200e', '').replace('\u200f', '')
+
+                            m_snip = re.search(r'<div[^>]*class="b_caption"[^>]*><p[^>]*>(.*?)</p>', item, re.DOTALL)
+                            snippet = re.sub(r'<[^>]+>', '', m_snip.group(1)).strip() if m_snip else ""
+                            snippet = html.unescape(snippet).replace('\u200e', '').replace('\u200f', '')
+
+                            d = clean_domain_str(url)
+                            if url.startswith("http") and d and len(url) > 10 and d not in GENERIC_PLATFORMS and d not in seen_domains:
+                                seen_domains.add(d)
+                                candidates.append(RawLeadCandidate(
+                                    source="searxng",
+                                    title=title or d.split('.')[0].capitalize(),
+                                    text_content=snippet or f"Commercial business site for {d}",
+                                    url=url,
+                                    author_or_company=extract_company_from_title(title) or d.split('.')[0].capitalize(),
+                                    raw_domain=d,
+                                    priority_rank=1,
+                                    raw_metadata={"engine": "bing_live"}
+                                ))
+                                bing_count += 1
+                        if bing_count:
+                            logger.info(f"[Multi-Engine Search] ✓ Bing fetched {bing_count} corporate candidates")
+                except Exception as bing_err:
+                    logger.debug(f"[Multi-Engine Search] Bing exception: {bing_err}")
 
             # 2. Engine 2: DuckDuckGo Lite (Fast, robust, always accessible HTML endpoint)
             try:
@@ -476,8 +600,8 @@ async def fetch_searxng_async(
             except Exception as ddg_err:
                 logger.debug(f"[Multi-Engine Search] DDG Lite exception: {ddg_err}")
 
-            # 3. Engine 3: Yahoo Live Organic Web Search (Fallback if candidates < 5)
-            if len(candidates) < 5:
+            # 3. Engine 3: Yahoo Live Organic Web Search (Optional via USE_BING_FALLBACK, if candidates < 5)
+            if use_bing and len(candidates) < 5:
                 try:
                     logger.info(f"[Multi-Engine Search] Querying Yahoo Organic Search for query='{query}' (page={page})")
                     b_offset = (page - 1) * 10 + 1

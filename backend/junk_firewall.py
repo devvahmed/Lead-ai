@@ -194,6 +194,11 @@ def is_deterministic_junk(
     if is_in_domain_set(clean_d, REVIEW_DIRECTORIES):
         return True, f"Review directory / directory aggregator: {clean_d}"
 
+    # Trade show, exhibition, expo domain blacklist
+    EVENT_SIGNATURES = ('expo.', '-expo.', 'dairyexpo', 'worlddairy', 'tradeshow', 'trade-show', 'convention-center', 'event-center')
+    if any(sig in clean_d for sig in EVENT_SIGNATURES):
+        return True, f"Trade show / exhibition / event domain: {clean_d}"
+
     # 2. Article / Blog / Listicle URL Path Regex (Check paths on any domain first)
     if raw_url:
         try:
