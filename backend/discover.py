@@ -262,7 +262,8 @@ TITLE_SKIP_RE = re.compile(
     r'|^\s*list\s+of\b'
     r'|\b\d+\s+(?:best|top|largest|leading|fastest|most|promising|popular)\b'
     r'|\b(?:top|best|largest|leading)\s+\d+\b'
-    r'|\b(?:companies|startups|agencies|firms|vendors)\s+(?:in|of|for)\b'
+    r'|^(?:the\s+)?(?:top\s+|best\s+|leading\s+|largest\s+|browse\s+|list\s+of\s+)?(?:companies|startups|agencies|firms|vendors)\s+(?:in|of|for)\b'
+    r'|\b(?:browse|directory\s+of|list\s+of)\s+(?:companies|startups|agencies|firms|vendors)\s+(?:in|of|for)\b'
     r'|\b(?:company|companies|startup|startups|agency|agencies)\s+202[0-9]\b'
     r'|\branking[s]?\b'
     r'|\btop[- ]rated\b'
@@ -382,12 +383,12 @@ def is_official_homepage(url: str) -> bool:
     try:
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.lower().rstrip('/')
-        if not path or path in ('', '/en', '/us', '/global', '/home', '/about', '/about-us', '/index.html', '/index.php'):
+        if not path or path in ('', '/en', '/us', '/uk', '/gb', '/de', '/global', '/home', '/about', '/about-us', '/index.html', '/index.php'):
             return True
         if any(p in path for p in OFFICIAL_SKIP_PATHS):
             return False
         segments = [s for s in path.split('/') if s]
-        return len(segments) <= 2
+        return len(segments) <= 3
     except Exception:
         return True
 
@@ -485,9 +486,9 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
             # 2. Fallback: duckduckgo,brave
             # 3. Last Resort: startpage,qwant
             searxng_tiers = [
-                ("google,bing", "Primary"),
-                ("duckduckgo,brave", "Fallback"),
-                ("startpage,qwant", "Last Resort"),
+                ("google,bing,yandex", "Primary"),
+                ("duckduckgo,brave,qwant", "Fallback"),
+                ("startpage,yandex", "Last Resort"),
             ]
             loop = asyncio.get_event_loop()
 
@@ -542,167 +543,166 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     # Gate Bing/Yahoo behind USE_BING_FALLBACK (default: False)
     use_bing = os.getenv("USE_BING_FALLBACK", "false").lower() in ("true", "1")
     if not use_bing:
-        print(f"[Discover Search] Bing/Yahoo fallback disabled (USE_BING_FALLBACK=false).")
-        return results or []
+        print(f"[Discover Search] Bing/Yahoo fallback skipped (USE_BING_FALLBACK=false), proceeding to DDG.")
+    else:
+        # ── Attempt 2: Bing Live Web Search (Optional via USE_BING_FALLBACK) ──
+        print(f"[Discover Search] ── Bing Live Search (Free & Organic) ──")
+        print(f"[Discover Search] Query sent to Bing: '{query}' (page={page})")
+        _all_providers_tried += 1
 
-    # ── Attempt 2: Bing Live Web Search (Optional via USE_BING_FALLBACK) ──
-    print(f"[Discover Search] ── Bing Live Search (Free & Organic) ──")
-    print(f"[Discover Search] Query sent to Bing: '{query}' (page={page})")
-    _all_providers_tried += 1
+        try:
+            def decode_bing_ck_u(u_param: str) -> str:
+                if u_param.startswith("a1"):
+                    b64 = u_param[2:]
+                    b64 += "=" * ((4 - len(b64) % 4) % 4)
+                    try:
+                        import base64
+                        return base64.b64decode(b64).decode('utf-8', errors='ignore')
+                    except Exception:
+                        return ""
+                return ""
 
-    try:
-        def decode_bing_ck_u(u_param: str) -> str:
-            if u_param.startswith("a1"):
-                b64 = u_param[2:]
-                b64 += "=" * ((4 - len(b64) % 4) % 4)
+            loop = asyncio.get_event_loop()
+            def _fetch_bing_live():
                 try:
-                    import base64
-                    return base64.b64decode(b64).decode('utf-8', errors='ignore')
-                except Exception:
-                    return ""
-            return ""
-
-        loop = asyncio.get_event_loop()
-        def _fetch_bing_live():
-            try:
-                import httpx as py_httpx
-                headers_b = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }
-                with py_httpx.Client(headers=headers_b, follow_redirects=True, timeout=10.0) as client:
-                    client.get("https://www.bing.com/?setmkt=en-US&setlang=en")
-                    first_val = (page - 1) * 10 + 1
-                    b_resp = client.get("https://www.bing.com/search", params={"q": query, "form": "QBLH", "first": first_val})
-                    if b_resp.status_code == 200:
-                        matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)(?=<li[^>]*class="[^"]*b_algo|</ul>|</ol>|$)', b_resp.text, re.DOTALL)
-                        if not matches:
-                            matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
-                        items = []
-                        for item in matches:
-                            target_u = ""
-                            m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
-                            if m_u:
-                                target_u = decode_bing_ck_u(m_u.group(1))
-                            if not target_u:
-                                m_c = re.search(r'<cite>([^<]+)</cite>', item)
-                                if m_c:
-                                    c_u = m_c.group(1).strip()
-                                    target_u = "https://" + c_u if not c_u.startswith("http") else c_u
+                    import httpx as py_httpx
+                    headers_b = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    }
+                    with py_httpx.Client(headers=headers_b, follow_redirects=True, timeout=10.0) as client:
+                        client.get("https://www.bing.com/?setmkt=en-US&setlang=en")
+                        first_val = (page - 1) * 10 + 1
+                        b_resp = client.get("https://www.bing.com/search", params={"q": query, "form": "QBLH", "first": first_val})
+                        if b_resp.status_code == 200:
+                            matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)(?=<li[^>]*class="[^"]*b_algo|</ul>|</ol>|$)', b_resp.text, re.DOTALL)
+                            if not matches:
+                                matches = re.findall(r'<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>(.*?)</li>', b_resp.text, re.DOTALL)
+                            items = []
+                            for item in matches:
+                                target_u = ""
+                                m_u = re.search(r'href="https://www\.bing\.com/ck/a\?[^"]*u=([^&"]+)', item)
+                                if m_u:
+                                    target_u = decode_bing_ck_u(m_u.group(1))
+                                if not target_u:
+                                    m_c = re.search(r'<cite>([^<]+)</cite>', item)
+                                    if m_c:
+                                        c_u = m_c.group(1).strip()
+                                        target_u = "https://" + c_u if not c_u.startswith("http") else c_u
                             
-                            dom = clean_domain(target_u)
-                            is_site_query = "site:" in query.lower() or "linkedin" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
-                            if target_u.startswith("http") and dom and len(target_u) > 10 and (is_site_query or dom not in EXCLUDE_DOMAINS):
-                                if is_site_query or not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
-                                    m_t = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
-                                    t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
-                                    t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
+                                dom = clean_domain(target_u)
+                                is_site_query = "site:" in query.lower() or "linkedin" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
+                                if target_u.startswith("http") and dom and len(target_u) > 10 and (is_site_query or dom not in EXCLUDE_DOMAINS):
+                                    if is_site_query or not any(x in dom for x in ('wikipedia.', 'dictionary.', 'merriam-webster.', 'investopedia.', 'bestbuy.', 'openai.', 'chatgpt.', 'google.', 'microsoft.', 'youtube.')):
+                                        m_t = re.search(r'<h2[^>]*><a[^>]*>(.*?)</a></h2>', item, re.DOTALL)
+                                        t = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
+                                        t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
                                     
-                                    m_s = re.search(r'<div[^>]*class="b_caption"[^>]*><p[^>]*>(.*?)</p>', item, re.DOTALL)
-                                    s = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
-                                    s = html.unescape(s).replace('\u200e', '').replace('\u200f', '')
+                                        m_s = re.search(r'<div[^>]*class="b_caption"[^>]*><p[^>]*>(.*?)</p>', item, re.DOTALL)
+                                        s = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
+                                        s = html.unescape(s).replace('\u200e', '').replace('\u200f', '')
                                     
+                                        items.append({
+                                            "url": target_u,
+                                            "title": t or dom.split('.')[0].capitalize(),
+                                            "content": s or f"Operating B2B entity in search domain: {dom}",
+                                            "snippet": s,
+                                            "source": "bing_live"
+                                        })
+                            return items
+                except Exception as b_err:
+                    print(f"[Discover Search] Bing fetch exception: {b_err}")
+                    return []
+                return []
+
+            bing_items = await loop.run_in_executor(None, _fetch_bing_live)
+            if bing_items:
+                # Relevance verification gate: Ensure Bing didn't return bot-shield junk
+                # (e.g. "Events in Karachi", "Convert JPG to PDF", generic consumer portals)
+                q_words = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', query) if w.lower() not in ('and', 'the', 'for', 'with', 'from', 'site', 'linkedin')]
+                relevant_items = []
+                for b_it in bing_items:
+                    combined_text = (b_it.get("title", "") + " " + b_it.get("snippet", "") + " " + b_it.get("url", "")).lower()
+                    if not q_words or any(qw in combined_text for qw in q_words):
+                        relevant_items.append(b_it)
+                if len(relevant_items) >= 1:
+                    print(f"[Discover Search] ✓ Bing SUCCESS: {len(relevant_items)} relevant corporate results")
+                    return relevant_items
+                else:
+                    print(f"[Discover Search] Bing returned {len(bing_items)} results but 0 matched query keywords '{q_words[:4]}' (bot protection detected) — falling back to Yahoo/DDG")
+        except Exception as e:
+            print(f"[Discover Search] Bing outer exception: {e}")
+
+        # ── Attempt 3: Yahoo Live Web Search Fallback (Zero Hallucination, Free, Real B2B Entities) ──
+        print(f"[Discover Search] ── Yahoo Live Search Fallback (Free & Organic) ──")
+        print(f"[Discover Search] Query sent to Yahoo: '{query}' (page={page})")
+        _all_providers_tried += 1
+
+
+        try:
+            b_offset = (page - 1) * 10 + 1
+            y_url = "https://search.yahoo.com/search"
+            y_params = urllib.parse.urlencode({"p": query, "b": b_offset})
+            full_y_url = f"{y_url}?{y_params}"
+            y_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9"
+            }
+            loop = asyncio.get_event_loop()
+
+            def _fetch_yahoo():
+                try:
+                    import html as py_html
+                    req_y = urllib.request.Request(full_y_url, headers=y_headers)
+                    with urllib.request.urlopen(req_y, timeout=8.0) as resp:
+                        if resp.status != 200:
+                            return []
+                        raw_html = resp.read().decode('utf-8', errors='ignore')
+                        items = []
+                        blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</li>', raw_html, re.DOTALL)
+                        if not blocks:
+                            blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</div>\s*</div>', raw_html, re.DOTALL)
+
+                        for b_html in blocks:
+                            m_u = re.search(r'href="https://r\.search\.yahoo\.com/[^"]*RU=([^/&"]+)/', b_html)
+                            if not m_u:
+                                continue
+                            target_url = urllib.parse.unquote(m_u.group(1))
+
+                            m_t = re.search(r'<h3[^>]*>(.*?)</h3>', b_html, re.DOTALL)
+                            title = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
+                            title = py_html.unescape(title)
+
+                            m_s = re.search(r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>(.*?)</div>', b_html, re.DOTALL)
+                            snippet = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
+                            snippet = py_html.unescape(snippet)
+
+                            dom = clean_domain(target_url)
+                            is_li_query = "linkedin" in query.lower() or "site:" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
+                            if target_url.startswith("http") and dom and len(target_url) > 10 and (is_li_query or dom not in EXCLUDE_DOMAINS):
+                                if is_li_query or not any(x in dom for x in ('yahoo.', 'yimg.', 'bing.', 'microsoft.', 'google.', 'facebook.', 'twitter.', 'instagram.', 'youtube.', 'wikipedia.')):
                                     items.append({
-                                        "url": target_u,
-                                        "title": t or dom.split('.')[0].capitalize(),
-                                        "content": s or f"Operating B2B entity in search domain: {dom}",
-                                        "snippet": s,
-                                        "source": "bing_live"
+                                        "url": target_url,
+                                        "title": title or dom.split('.')[0].capitalize(),
+                                        "content": snippet or f"Operating B2B entity in search domain: {dom}",
+                                        "snippet": snippet,
+                                        "source": "yahoo"
                                     })
                         return items
-            except Exception as b_err:
-                print(f"[Discover Search] Bing fetch exception: {b_err}")
-                return []
-            return []
+                except Exception as y_err:
+                    print(f"[Discover Search] Yahoo fetch exception: {y_err}")
+                    return []
 
-        bing_items = await loop.run_in_executor(None, _fetch_bing_live)
-        if bing_items:
-            # Relevance verification gate: Ensure Bing didn't return bot-shield junk
-            # (e.g. "Events in Karachi", "Convert JPG to PDF", generic consumer portals)
-            q_words = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', query) if w.lower() not in ('and', 'the', 'for', 'with', 'from', 'site', 'linkedin')]
-            relevant_items = []
-            for b_it in bing_items:
-                combined_text = (b_it.get("title", "") + " " + b_it.get("snippet", "") + " " + b_it.get("url", "")).lower()
-                if not q_words or any(qw in combined_text for qw in q_words):
-                    relevant_items.append(b_it)
-            if len(relevant_items) >= 1:
-                print(f"[Discover Search] ✓ Bing SUCCESS: {len(relevant_items)} relevant corporate results")
-                return relevant_items
+            yahoo_items = await loop.run_in_executor(None, _fetch_yahoo)
+            if yahoo_items:
+                print(f"[Discover Search] ✓ Yahoo SUCCESS: {len(yahoo_items)} organic results")
+                return yahoo_items
             else:
-                print(f"[Discover Search] Bing returned {len(bing_items)} results but 0 matched query keywords '{q_words[:4]}' (bot protection detected) — falling back to Yahoo/DDG")
-    except Exception as e:
-        print(f"[Discover Search] Bing outer exception: {e}")
-
-    # ── Attempt 3: Yahoo Live Web Search Fallback (Zero Hallucination, Free, Real B2B Entities) ──
-    print(f"[Discover Search] ── Yahoo Live Search Fallback (Free & Organic) ──")
-    print(f"[Discover Search] Query sent to Yahoo: '{query}' (page={page})")
-    _all_providers_tried += 1
-
-
-    try:
-        b_offset = (page - 1) * 10 + 1
-        y_url = "https://search.yahoo.com/search"
-        y_params = urllib.parse.urlencode({"p": query, "b": b_offset})
-        full_y_url = f"{y_url}?{y_params}"
-        y_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9"
-        }
-        loop = asyncio.get_event_loop()
-
-        def _fetch_yahoo():
-            try:
-                import html as py_html
-                req_y = urllib.request.Request(full_y_url, headers=y_headers)
-                with urllib.request.urlopen(req_y, timeout=8.0) as resp:
-                    if resp.status != 200:
-                        return []
-                    raw_html = resp.read().decode('utf-8', errors='ignore')
-                    items = []
-                    blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</li>', raw_html, re.DOTALL)
-                    if not blocks:
-                        blocks = re.findall(r'<div[^>]*class="[^"]*algo[^"]*"[^>]*>(.*?)</div>\s*</div>', raw_html, re.DOTALL)
-
-                    for b_html in blocks:
-                        m_u = re.search(r'href="https://r\.search\.yahoo\.com/[^"]*RU=([^/&"]+)/', b_html)
-                        if not m_u:
-                            continue
-                        target_url = urllib.parse.unquote(m_u.group(1))
-
-                        m_t = re.search(r'<h3[^>]*>(.*?)</h3>', b_html, re.DOTALL)
-                        title = re.sub(r'<[^>]+>', '', m_t.group(1)).strip() if m_t else ""
-                        title = py_html.unescape(title)
-
-                        m_s = re.search(r'<div[^>]*class="[^"]*compText[^"]*"[^>]*>(.*?)</div>', b_html, re.DOTALL)
-                        snippet = re.sub(r'<[^>]+>', '', m_s.group(1)).strip() if m_s else ""
-                        snippet = py_html.unescape(snippet)
-
-                        dom = clean_domain(target_url)
-                        is_li_query = "linkedin" in query.lower() or "site:" in query.lower() or any(k in query.lower() for k in ('ceo', 'founder', 'director', 'leadership', 'president'))
-                        if target_url.startswith("http") and dom and len(target_url) > 10 and (is_li_query or dom not in EXCLUDE_DOMAINS):
-                            if is_li_query or not any(x in dom for x in ('yahoo.', 'yimg.', 'bing.', 'microsoft.', 'google.', 'facebook.', 'twitter.', 'instagram.', 'youtube.', 'wikipedia.')):
-                                items.append({
-                                    "url": target_url,
-                                    "title": title or dom.split('.')[0].capitalize(),
-                                    "content": snippet or f"Operating B2B entity in search domain: {dom}",
-                                    "snippet": snippet,
-                                    "source": "yahoo"
-                                })
-                    return items
-            except Exception as y_err:
-                print(f"[Discover Search] Yahoo fetch exception: {y_err}")
-                return []
-
-        yahoo_items = await loop.run_in_executor(None, _fetch_yahoo)
-        if yahoo_items:
-            print(f"[Discover Search] ✓ Yahoo SUCCESS: {len(yahoo_items)} organic results")
-            return yahoo_items
-        else:
-            print(f"[Discover Search] Yahoo returned 0 results for query='{query}'")
-    except Exception as e:
-        print(f"[Discover Search] Yahoo outer exception: {e}")
+                print(f"[Discover Search] Yahoo returned 0 results for query='{query}'")
+        except Exception as e:
+            print(f"[Discover Search] Yahoo outer exception: {e}")
 
     # ── Attempt 3: DuckDuckGo Lite Fallback (Zero Hallucination) ──
     print(f"[Discover Search] ── DuckDuckGo Lite Fallback ──")
@@ -1115,10 +1115,10 @@ async def evaluate_lead_classification(
       source         : str
     """
     # ── Rule-Engine Pre-Check for Obvious Junk/Directories/Listicles ────────────
-    comb_text = f"{company_name} {snippet} {scraped_text[:500]}"
-    if TITLE_SKIP_RE.search(comb_text) or JUNK_KEYWORD_RE.search(comb_text):
-        match_obj = JUNK_KEYWORD_RE.search(comb_text) or TITLE_SKIP_RE.search(comb_text)
-        matched_str = match_obj.group(0) if match_obj else "directory/listicle"
+    comb_text = f"{snippet} {scraped_text[:500]}"
+    junk_match = JUNK_KEYWORD_RE.search(comb_text) or JUNK_KEYWORD_RE.search(company_name) or TITLE_SKIP_RE.search(company_name)
+    if junk_match:
+        matched_str = junk_match.group(0) if junk_match else "directory/listicle"
         junk_reason = f"JUNK: Directory, marketplace, or listicle article detected ('{matched_str}')"
         print(f"[Rule Engine] 🗑️  REJECTED — junk/directory/listicle: {domain} | {junk_reason}")
         return {
@@ -1355,7 +1355,13 @@ def generate_industry_search_queries(
             f"shoes footwear brand online store{loc_suffix}",
             f"beauty cosmetics brand online store{loc_suffix}",
             f"home lifestyle goods online store{loc_suffix}",
-            f"ecommerce retail stores buy products{loc_suffix}"
+            f"ecommerce retail stores buy products{loc_suffix}",
+            f"d2c consumer brands official store{loc_suffix}",
+            f"jewelry accessories brand online shop{loc_suffix}",
+            f"health wellness nutrition products store{loc_suffix}",
+            f"sports outdoor gear brand shop{loc_suffix}",
+            f"specialty boutique brand store{loc_suffix}",
+            f"premium consumer products online shop{loc_suffix}"
         ]
     elif is_manufacturing_industrial:
         deterministic_queries = [
@@ -1364,7 +1370,15 @@ def generate_industry_search_queries(
             f"{clean_industry} contract packaging manufacturer{loc_suffix}",
             f"{clean_industry} processing facility plant{loc_suffix}",
             f"{clean_industry} OEM equipment manufacturing{loc_suffix}",
-            f"{clean_industry} production facility operations{loc_suffix}"
+            f"{clean_industry} production facility operations{loc_suffix}",
+            f"{clean_industry} industrial equipment suppliers{loc_suffix}",
+            f"{clean_industry} custom manufacturing fabrication{loc_suffix}",
+            f"{clean_industry} industrial suppliers commercial{loc_suffix}",
+            f"{clean_industry} packaging solutions plant{loc_suffix}",
+            f"{clean_industry} contract manufacturing services{loc_suffix}",
+            f"leading {clean_industry} manufacturers{loc_suffix}",
+            f"{clean_industry} commercial production plant{loc_suffix}",
+            f"{clean_industry} engineering manufacturing company{loc_suffix}"
         ]
     elif is_healthcare:
         deterministic_queries = [
@@ -1375,7 +1389,11 @@ def generate_industry_search_queries(
             f"aesthetic wellness clinic treatments{loc_suffix}",
             f"family health clinic our doctors{loc_suffix}",
             f"diagnostic medical center services{loc_suffix}",
-            f"private hospital healthcare services{loc_suffix}"
+            f"private hospital healthcare services{loc_suffix}",
+            f"orthopedic clinic patient appointments{loc_suffix}",
+            f"cardiology medical specialists clinic{loc_suffix}",
+            f"dermatology skin care clinic practice{loc_suffix}",
+            f"pediatric health clinic our doctors{loc_suffix}"
         ]
     elif is_real_estate:
         deterministic_queries = [
@@ -1384,7 +1402,11 @@ def generate_industry_search_queries(
             f"luxury real estate brokers property listings{loc_suffix}",
             f"housing development property developers{loc_suffix}",
             f"commercial property agency office leasing{loc_suffix}",
-            f"real estate firm buy rent properties{loc_suffix}"
+            f"real estate firm buy rent properties{loc_suffix}",
+            f"commercial real estate brokers leasing{loc_suffix}",
+            f"residential property management firm{loc_suffix}",
+            f"corporate real estate advisory firm{loc_suffix}",
+            f"premier estate agents property sales{loc_suffix}"
         ]
     elif is_hospitality:
         deterministic_queries = [
@@ -1392,35 +1414,48 @@ def generate_industry_search_queries(
             f"restaurant dining reserve table menu{loc_suffix}",
             f"travel tour operators holiday packages{loc_suffix}",
             f"luxury hotel accommodations contact{loc_suffix}",
-            f"catering event services company{loc_suffix}"
+            f"catering event services company{loc_suffix}",
+            f"hospitality group hotels resorts{loc_suffix}",
+            f"fine dining restaurant reservations menu{loc_suffix}",
+            f"executive suites boutique hotel{loc_suffix}"
         ]
     elif is_education:
         deterministic_queries = [
             f"private university admissions apply online{loc_suffix}",
             f"international school academics enrollment{loc_suffix}",
             f"professional training institute academy{loc_suffix}",
-            f"career academy certification programs{loc_suffix}"
+            f"career academy certification programs{loc_suffix}",
+            f"higher education institute academic courses{loc_suffix}",
+            f"private college admissions programs{loc_suffix}"
         ]
     elif is_automotive:
         deterministic_queries = [
             f"car dealership vehicle inventory sales{loc_suffix}",
             f"automotive repair service center book{loc_suffix}",
             f"auto parts accessories store shop{loc_suffix}",
-            f"commercial vehicle sales dealership{loc_suffix}"
+            f"commercial vehicle sales dealership{loc_suffix}",
+            f"auto fleet maintenance services{loc_suffix}",
+            f"certified automotive dealership showroom{loc_suffix}"
         ]
     elif is_logistics:
         deterministic_queries = [
             f"freight forwarding logistics company quote{loc_suffix}",
             f"warehousing 3pl logistics services{loc_suffix}",
             f"cargo transport trucking company contact{loc_suffix}",
-            f"supply chain distribution provider{loc_suffix}"
+            f"supply chain distribution provider{loc_suffix}",
+            f"international air ocean freight forwarders{loc_suffix}",
+            f"contract logistics warehouse operations{loc_suffix}",
+            f"cross border transportation freight services{loc_suffix}",
+            f"global shipping logistics company{loc_suffix}"
         ]
     elif is_legal_finance:
         deterministic_queries = [
             f"law firm attorneys practice areas contact{loc_suffix}",
             f"chartered accountants cpa tax advisory firm{loc_suffix}",
             f"wealth management financial advisory firm{loc_suffix}",
-            f"corporate legal counsel attorneys office{loc_suffix}"
+            f"corporate legal counsel attorneys office{loc_suffix}",
+            f"commercial law solicitors partners{loc_suffix}",
+            f"audit tax advisory accounting practice{loc_suffix}"
         ]
     elif is_explicit_agency:
         deterministic_queries = [
@@ -1430,12 +1465,20 @@ def generate_industry_search_queries(
         ]
     else:
         deterministic_queries = [
-            f"{clean_industry} company official website contact{loc_suffix}",
+            f"{clean_industry} company official website{loc_suffix}",
             f"{clean_industry} commercial business products{loc_suffix}",
             f"leading {clean_industry} corporate providers{loc_suffix}",
             f"top {clean_industry} brands operating in{loc_suffix}",
             f"{clean_industry} commercial operations about us{loc_suffix}",
-            f"registered {clean_industry} business directory official{loc_suffix}"
+            f"{clean_industry} suppliers manufacturers official website{loc_suffix}",
+            f"{clean_industry} commercial services headquarters{loc_suffix}",
+            f"{clean_industry} business enterprise contact{loc_suffix}",
+            f"{clean_industry} commercial clients provider{loc_suffix}",
+            f"{clean_industry} specialized operations firm{loc_suffix}",
+            f"premier {clean_industry} corporate group{loc_suffix}",
+            f"{clean_industry} registered company website{loc_suffix}",
+            f"{clean_industry} commercial solutions provider{loc_suffix}",
+            f"{clean_industry} regional headquarters{loc_suffix}"
         ]
 
     prompt = f"""You are a senior B2B web search engineer. Generate 6 realistic, natural search engine queries to find REAL OPERATING BUSINESSES / STORES / CLINICS / ENTITIES in this target industry: "{clean_industry}".
@@ -1493,14 +1536,14 @@ Example for "Healthcare":
                 for lq in valid_queries:
                     if lq not in combined_queries:
                         combined_queries.append(lq)
-                queries = combined_queries[:8]
+                queries = combined_queries[:16]
                 print(f"[Search Query Builder] Industry: '{clean_industry}' (Curated Archetype) → {len(queries)} high-end queries:")
                 for idx, q in enumerate(queries, 1):
                     print(f"   Query #{idx}: '{q}'")
                 return queries
 
             if valid_queries:
-                queries = valid_queries[:8]
+                queries = valid_queries[:16]
                 print(f"[Search Query Builder] Industry: '{clean_industry}' (Dynamic LLM) → {len(queries)} queries:")
                 for idx, q in enumerate(queries, 1):
                     print(f"   Query #{idx}: '{q}'")
@@ -1643,8 +1686,10 @@ async def stream_discovery(
     subpage_offset = (prior_domain_count // (3 * num_vars))
 
     variation_idx = variation_offset
-    query_subpage = 1 + subpage_offset
+    query_subpage = 1 + (subpage_offset % 2)
     print(f"[Discover] 🔄 Query Rotation: Prior domains={prior_domain_count} → Starting variation_idx={variation_idx} ('{query_variations[variation_idx % num_vars]}'), start subpage={query_subpage}")
+
+    angle_modifiers = ["suppliers", "manufacturers", "commercial services", "enterprise", "solutions", "brands", "distributors", "providers"]
 
     for current_page in range(start_page, start_page + max_pages):
         if qualified_total >= target_count:
@@ -1654,7 +1699,13 @@ async def stream_discovery(
         if current_page > start_page:
             await asyncio.sleep(1.0)
 
-        active_query = query_variations[variation_idx % len(query_variations)]
+        cycle_count = variation_idx // len(query_variations)
+        base_q = query_variations[variation_idx % len(query_variations)]
+        if cycle_count > 0:
+            mod = angle_modifiers[(cycle_count - 1) % len(angle_modifiers)]
+            active_query = f"{base_q} {mod}"
+        else:
+            active_query = base_q
 
         print(f"\n[Discover] ─── Step {current_page} (Goal: {qualified_total}/{target_count}) | Subpage: {query_subpage} | Query: '{active_query}' ───")
         raw_results = []

@@ -544,7 +544,8 @@ Respond ONLY in valid JSON. No markdown backticks:
     text_lower = text_sample.lower()
     cities = target_profile.get("cities", []) if target_profile else []
     city_hit = any(re.search(r'\b' + re.escape(c.lower()) + r'\b', text_lower) for c in cities)
-    country_hit = country_name.lower() in text_lower
+    aliases = target_profile.get("aliases", [country_name.lower()]) if target_profile else [country_name.lower()]
+    country_hit = any(re.search(r'\b' + re.escape(a) + r'\b', text_lower) for a in aliases)
 
     if city_hit or country_hit:
         return {
@@ -552,6 +553,18 @@ Respond ONLY in valid JSON. No markdown backticks:
             "detected_country": country_name,
             "confidence": 75,
             "reason": f"Heuristic geo-fallback confirmed local presence ({country_name})"
+        }
+
+    # If domain has no foreign ccTLD conflict and no conflicting foreign signals, allow plausible regional businesses
+    clean_d = clean_domain_key(domain)
+    target_key = aliases[0] if aliases else ""
+    has_foreign_cctld = any(clean_d.endswith(f_tld) for f_tld, f_country in ALL_CCTLDS_MAP.items() if f_country != target_key)
+    if not has_foreign_cctld:
+        return {
+            "is_local_entity": True,
+            "detected_country": country_name,
+            "confidence": 65,
+            "reason": f"Geo-targeted search match without conflicting foreign signals ({clean_d})"
         }
 
     return {

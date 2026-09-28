@@ -232,7 +232,7 @@ Respond ONLY in valid JSON format. No markdown backticks:
             "reason": "Heuristic fallback detected competing agency pitch"
         }
 
-    if any(p in text_lower for p in ("401k", "health insurance", "annual salary", "w2", "dental")):
+    if any(p in text_lower for p in ("401k", "health insurance", "annual salary", "w2", "w-2", "dental insurance", "dental benefits", "paid time off")):
         return {
             "is_valid_buyer": False,
             "intent_type": "STANDARD_EMPLOYMENT_JOB",
@@ -241,7 +241,7 @@ Respond ONLY in valid JSON format. No markdown backticks:
         }
 
     # Default to commercial target if it has commercial operational language
-    if any(p in text_lower for p in ("facilities", "manufacturing", "operations", "contact us", "solutions")):
+    if any(p in text_lower for p in ("facilities", "manufacturing", "operations", "contact us", "solutions", "services", "products", "store", "shop", "clinic", "care", "practice", "logistics", "company", "firm", "about")):
         return {
             "is_valid_buyer": True,
             "intent_type": "COMMERCIAL_TARGET",
@@ -284,6 +284,11 @@ async def run_intent_classifier(
     if is_buyer is True and conf >= 0.80:
         # Definite approval (CONTRACT_BUYER or strong COMMERCIAL_TARGET)
         return True, intent_type, f"[Tier 1 Deterministic] Approved {intent_type.replace('_', ' ').title()}"
+
+    # For regular corporate web discovery, operating business websites qualify as COMMERCIAL_TARGET
+    # unless they are explicitly identified as a competing seller agency or employment job posting.
+    if not is_intent_source and is_buyer is not False:
+        return True, "COMMERCIAL_TARGET", "[Web Corporate Discovery] Operating business target"
 
     # ── Tier 2: Contextual LLM Gatekeeper ─────────────────────────────────────
     contextual_res = await evaluate_contextual_intent(
