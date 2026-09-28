@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.request
 import urllib.parse
 import smtplib
@@ -90,19 +90,22 @@ class CrawlRequest(BaseModel):
     website_url: str
 
 # ─── Regex Contact Extraction ─────────────────────────────────────────────────
-EMAIL_RE            = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', re.IGNORECASE)
+from contact_enricher_pro import (
+    STRICT_EMAIL,
+    VALID_TLDS,
+    SUSPICIOUS_LOCAL_WORDS,
+    INVALID_EMAIL_EXTENSIONS,
+    has_mx_record,
+    email_belongs_to_company,
+    is_personal_email
+)
+
+EMAIL_RE            = STRICT_EMAIL
 PHONE_RE            = re.compile(r'(\+?\d{1,4}[-.\s]??\(?\d{1,3}\)?[-.\s]??\d{1,4}[-.\s]??\d{1,4}[-.\s]??\d{1,9})')
 LINKEDIN_RE         = re.compile(r'https?://(?:www\.)?linkedin\.com/(?:company|in|profile|pub)/[a-zA-Z0-9\-_%]+', re.IGNORECASE)
 LINKEDIN_COMPANY_RE = re.compile(r'https?://(?:www\.)?linkedin\.com/company/[a-zA-Z0-9\-_%]+', re.IGNORECASE)
 LINKEDIN_PEOPLE_RE  = re.compile(r'https?://(?:www\.)?linkedin\.com/(?:in|profile|pub)/[a-zA-Z0-9\-_%]+', re.IGNORECASE)
 HEADING_RE          = re.compile(r'^#{1,3}\s+(.+)$', re.MULTILINE)
-
-INVALID_EMAIL_EXTENSIONS = {
-    'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tif', 'tiff',
-    'css', 'js', 'woff', 'woff2', 'ttf', 'eot', 'mp4', 'webm', 'pdf', 'zip',
-    'min', 'pack', 'chunk', 'bundle', 'map', 'json', 'ts', 'tsx', 'jsx', 'vue',
-    'scss', 'less', 'gz', 'tar', 'bz2', '7z', 'rar', 'exe', 'dll', 'bin'
-}
 
 _EMAIL_EXCLUDE = {
     'bootstrap', 'jquery', 'wp-content', 'theme', 'plugin', 'template',
@@ -112,39 +115,60 @@ _EMAIL_EXCLUDE = {
     'react', 'vue', 'chunk', 'npm', 'cdn', 'jsdelivr', 'unpkg', 'fontawesome'
 }
 
-def is_valid_email(em: str) -> bool:
+def is_valid_email(em: str, domain: Optional[str] = None, check_mx: bool = False) -> bool:
+    """
+    Validates structural email format with strict rules:
+    - Rejects garbage sentence captures (e.g. texas@austin.before)
+    - Enforces verified TLD list
+    - Rejects suspicious words in local part
+    - Enforces domain ownership if domain is specified
+    - Optionally checks MX record
+    """
     if not em or not isinstance(em, str):
         return False
     clean = em.strip().lower()
 
-    # 1. Structural Regex Match (valid characters, proper @ and domain)
-    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}$', clean):
+    # 1. Structural Regex Match
+    if not STRICT_EMAIL.fullmatch(clean):
         return False
 
-    # 2. Extract domain part after '@'
-    domain_part = clean.split('@')[-1]
+    parts = clean.split('@')
+    if len(parts) != 2:
+        return False
+    local_part, domain_part = parts
 
-    # 3. Domain TLD must be purely alphabetic
-    tld = domain_part.split('.')[-1]
-    if not tld.isalpha():
+    # 2. Local part suspicious word check
+    if any(sw in local_part for sw in SUSPICIOUS_LOCAL_WORDS):
         return False
 
-    # 4. TLD and sub-parts must not be in file asset extensions (e.g. .min, .js, .css, .bundle)
-    if tld in INVALID_EMAIL_EXTENSIONS:
-        return False
-    if any(part in INVALID_EMAIL_EXTENSIONS for part in domain_part.split('.')):
+    # 3. Domain formatting & dot count
+    if domain_part.count('.') > 3 or domain_part.startswith('.') or domain_part.endswith('.'):
         return False
 
-    # 5. Domain must not start with a digit (e.g. @7.0.5-bundle.min)
-    if domain_part[0].isdigit():
+    # 4. Domain TLD validation
+    tld = domain_part.split('.')[-1].lower()
+    if tld not in VALID_TLDS or tld in INVALID_EMAIL_EXTENSIONS:
         return False
 
-    # 6. Reject image resolution tags (@2x, @3x)
+    # 5. Reject image resolution tags (@2x, @3x)
     if re.search(r'@\d+(\.\d+)?x', clean):
         return False
 
-    # 7. Exclude known static asset, library, or generic placeholder keywords
+    # 6. Exclude known static asset, library, or generic placeholder keywords
     if any(kw in clean for kw in _EMAIL_EXCLUDE):
+        return False
+
+    # 7. Gibberish local part check
+    if len(local_part) >= 5 and not any(c in local_part for c in 'aeiouy0123456789'):
+        return False
+
+    # 8. Domain ownership check
+    if domain:
+        if not email_belongs_to_company(clean, domain):
+            return False
+
+    # 9. Cached MX check
+    if check_mx and not has_mx_record(domain_part):
         return False
 
     return True
@@ -191,12 +215,28 @@ def get_clean_page_name(raw_url: str) -> str:
         return "Website Page"
 
 
-def extract_regex_contacts(text: str, source_url: str = "", raw_html: str = "") -> dict:
+def extract_regex_contacts(
+    text: str,
+    source_url: str = "",
+    raw_html: str = "",
+    target_domain: Optional[str] = None
+) -> dict:
     """
     100% programmatic contact extraction with precise source reference tracking.
     Deduplicates emails and combines source references across all crawled pages.
     Supports raw HTML mailto links, JSON-LD schema blocks, and obfuscated formats.
+    Enforces strict regex, valid TLDs, and domain ownership against target_domain.
     """
+    effective_domain = target_domain
+    if not effective_domain and source_url:
+        try:
+            from urllib.parse import urlparse
+            p_netloc = urlparse(source_url).netloc.replace("www.", "").strip()
+            if p_netloc and '.' in p_netloc:
+                effective_domain = p_netloc
+        except Exception:
+            pass
+
     raw_emails = EMAIL_RE.findall(text)
     raw_phones = PHONE_RE.findall(text)
     raw_linkedins = LINKEDIN_RE.findall(text)
@@ -229,7 +269,7 @@ def extract_regex_contacts(text: str, source_url: str = "", raw_html: str = "") 
     seen_emails_lower = set()
 
     for em in raw_emails:
-        if not is_valid_email(em):
+        if not is_valid_email(em, domain=effective_domain, check_mx=False):
             continue
         em_lower = em.lower()
         if em_lower in seen_emails_lower:
@@ -453,85 +493,172 @@ async def fetch_raw_html(url: str) -> str:
     return await loop.run_in_executor(None, _fetch)
 
 
-def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 3) -> List[str]:
+def extract_navigation_items(homepage_url: str, soup: BeautifulSoup) -> List[Dict[str, str]]:
     """
-    Extracts up to `max_links` same-domain sub-page URLs from a company's homepage HTML,
-    strictly prioritizing:
-      1. Contact pages (e.g. /contact, /pages/contact-us, /contact-us, /support, /customer-service)
-      2. About / Company pages (e.g. /about, /about-us, /who-we-are)
-      3. Products / Services pages (e.g. /products, /services, /solutions)
-    Ensures contact pages are never crowded out by product catalogs.
+    Extracts all authentic navigation menu links from <nav>, <header>, menu containers, and <footer>.
+    """
+    from urllib.parse import urlparse, urljoin
+    base_parsed = urlparse(homepage_url)
+    base_netloc = base_parsed.netloc.lower().replace("www.", "")
+
+    nav_anchors = []
+    # 1. Structural semantic containers
+    for nav_tag in soup.find_all(['nav', 'header', 'footer']):
+        nav_anchors.extend(nav_tag.find_all('a', href=True))
+
+    # 2. Class and ID based menu containers
+    for menu_container in soup.find_all(attrs={"class": re.compile(r'(?:nav|menu|header|topbar)', re.I)}):
+        nav_anchors.extend(menu_container.find_all('a', href=True))
+    for menu_container in soup.find_all(attrs={"id": re.compile(r'(?:nav|menu|header)', re.I)}):
+        nav_anchors.extend(menu_container.find_all('a', href=True))
+
+    all_page_anchors = soup.find_all('a', href=True)
+    candidate_anchor_list = nav_anchors + all_page_anchors
+
+    items = []
+    seen = set()
+
+    for a in candidate_anchor_list:
+        href = a.get('href', '').strip()
+        anchor_text = a.get_text(separator=' ').strip()
+
+        if not href or href.startswith('#') or href.lower().startswith(('javascript:', 'mailto:', 'tel:')):
+            continue
+
+        full_url = urljoin(homepage_url, href)
+        parsed = urlparse(full_url)
+
+        cand_netloc = parsed.netloc.lower().replace("www.", "")
+        if cand_netloc != base_netloc and not cand_netloc.endswith('.' + base_netloc):
+            continue
+
+        path = parsed.path.lower().rstrip('/')
+        if not path or path in ('', '/en', '/us', '/home', '/index.html', '/index.php', '/default.aspx'):
+            continue
+
+        skip_extensions = ('.pdf', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.zip', '.mp4', '.webp', '.css', '.js')
+        if any(path.endswith(ext) for ext in skip_extensions):
+            continue
+        if any(term in path for term in ('login', 'signin', 'cart', 'checkout', 'terms', 'privacy-policy', 'cookie')):
+            continue
+
+        clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
+        if clean_target in seen or clean_target == homepage_url.rstrip('/'):
+            continue
+        seen.add(clean_target)
+
+        items.append({
+            "title": anchor_text or path.strip('/'),
+            "url": clean_target,
+            "path": path
+        })
+
+    return items
+
+
+def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 4) -> List[str]:
+    """
+    Dynamic AI & Semantic Navigation Crawler:
+    1. Extracts ALL authentic navigation menu items from the website's HTML (<nav>, <header>, footer).
+    2. Uses AI reasoning (Ollama/Groq/Gemini) to dynamically evaluate which pages contain:
+       - Founders / Leadership / Decision Makers
+       - Direct Contact Info / Emails / Phones
+       - Company Profile / About Us
+    3. Seamlessly falls back to semantic matching if AI is unreachable or times out.
     """
     if not homepage_url or not raw_html:
         return []
 
     try:
-        from urllib.parse import urlparse, urljoin
-        base_parsed = urlparse(homepage_url)
-        base_netloc = base_parsed.netloc.lower().replace("www.", "")
-
         soup = BeautifulSoup(raw_html, 'html.parser')
-        contact_kws = ["contact", "contact-us", "contactus", "get-in-touch", "reach-us", "support", "customer-service", "help"]
-        about_kws = ["about", "about-us", "company", "who-we-are", "our-story"]
-        product_kws = ["products", "services", "solutions", "what-we-do", "collections"]
+        nav_items = extract_navigation_items(homepage_url, soup)
 
+        if not nav_items:
+            return []
+
+        # ── Dynamic AI Selection ──
+        known_urls = {it["url"] for it in nav_items}  # build lookup set for AI-returned URL validation
+        if len(nav_items) >= 2:
+            try:
+                from llm_utils import call_llm
+                compact_menu = [{"title": it["title"], "url": it["url"]} for it in nav_items[:18]]
+                prompt = (
+                    "You are an expert B2B lead generation crawler helping find decision-maker contacts.\n"
+                    "Given this company's navigation menu items:\n"
+                    + json.dumps(compact_menu, indent=2)
+                    + f"\n\nSelect up to {max_links} URLs from this list that are MOST LIKELY to contain:\n"
+                    "  PRIORITY 1 — Team / Founders / Executives / Leadership pages\n"
+                    "    (look for: 'Our Team', 'Meet the Team', 'Leadership', 'Founders', 'Board', 'Our Tribe', 'People', 'Who We Are')\n"
+                    "  PRIORITY 2 — Contact / Offices / Reach Us pages\n"
+                    "    (look for: 'Contact', 'Get in Touch', 'Say Hello', 'Offices', 'Reach Us', 'Connect')\n"
+                    "  PRIORITY 3 — About / Company Profile pages\n"
+                    "    (look for: 'About', 'Our Story', 'Manifesto', 'Company', 'Overview')\n\n"
+                    "STRICTLY EXCLUDE: careers, jobs, blog, news, press, events, products, services, pricing, case studies.\n"
+                    'Return ONLY a valid JSON array of selected URLs. Example: ["https://...", "https://..."]'
+                )
+                ai_res = call_llm(prompt, temperature=0.1, max_tokens=150, timeout=3.0, domain_tag="DynamicNavAI")
+                if ai_res:
+                    # Try JSON parse first, then regex fallback
+                    extracted_urls: List[str] = []
+                    try:
+                        json_match = re.search(r'\[.*?\]', ai_res, re.DOTALL)
+                        if json_match:
+                            extracted_urls = json.loads(json_match.group())
+                    except Exception:
+                        extracted_urls = re.findall(r'https?://[^\s"\'\]<>]+', ai_res)
+                    valid_ai_urls = list(dict.fromkeys(
+                        [u.rstrip('",\'') for u in extracted_urls if u.rstrip('",\'') in known_urls]
+                    ))
+                    if valid_ai_urls:
+                        print(f"[DynamicNavAI] \U0001f3af AI dynamically selected {len(valid_ai_urls)} pages from navbar: {valid_ai_urls}", flush=True)
+                        return valid_ai_urls[:max_links]
+            except Exception as ai_e:
+                print(f"[DynamicNavAI] Skipped/Timed out: {ai_e}", flush=True)
+
+        # ── High-Precision Semantic Classification Fallback ──
+        leadership_kws = [
+            "leadership", "board-of-directors", "board", "our-team", "team", "management",
+            "executives", "executive-team", "our-people", "people", "who-we-are", "founders",
+            "directors", "meet-the-team", "management-team", "leadership-team", "partners",
+            "tribe", "crew", "humans", "folks", "staff"
+        ]
+        contact_kws = [
+            "contact", "contact-us", "contactus", "get-in-touch", "reach-us", "locations",
+            "our-offices", "connect", "inquiry", "enquiry", "support", "say-hello", "talk-to-us"
+        ]
+        about_kws = [
+            "about", "about-us", "company", "our-story", "overview", "corporate-profile", "manifesto"
+        ]
+
+        leadership_candidates = []
         contact_candidates = []
         about_candidates = []
-        product_candidates = []
         other_candidates = []
-        seen_urls = set()
 
-        for a in soup.find_all('a', href=True):
-            href = a['href'].strip()
-            anchor_text = a.get_text(separator=' ').strip().lower()
+        for it in nav_items:
+            path_and_anchor = f"{it['path']} {it['title'].lower()}".strip()
+            url = it["url"]
 
-            if not href or href.startswith('#') or href.lower().startswith(('javascript:', 'mailto:', 'tel:')):
-                continue
-
-            full_url = urljoin(homepage_url, href)
-            parsed = urlparse(full_url)
-
-            # Must be same domain (or subdomain)
-            cand_netloc = parsed.netloc.lower().replace("www.", "")
-            if cand_netloc != base_netloc and not cand_netloc.endswith('.' + base_netloc):
-                continue
-
-            # Must be a sub-page path, not the homepage itself
-            path = parsed.path.lower().rstrip('/')
-            if not path or path in ('', '/en', '/us', '/home', '/index.html', '/index.php'):
-                continue
-
-            # Skip personnel/leadership/bio pages to prioritize company-level business evidence
-            skip_terms = ["leadership", "executive", "board-of-directors", "bio", "people", "management-team", "careers", "job-openings"]
-            path_and_anchor = f"{parsed.path.lower()}?{parsed.query.lower()} {anchor_text}"
-            if any(st in path_and_anchor for st in skip_terms):
-                continue
-
-            clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip('/')
-            if clean_target in seen_urls or clean_target == homepage_url.rstrip('/'):
-                continue
-            seen_urls.add(clean_target)
-
-            if any(kw in path_and_anchor for kw in contact_kws):
-                contact_candidates.append(clean_target)
+            if any(kw in path_and_anchor for kw in leadership_kws):
+                leadership_candidates.append(url)
+            elif any(kw in path_and_anchor for kw in contact_kws):
+                contact_candidates.append(url)
             elif any(kw in path_and_anchor for kw in about_kws):
-                about_candidates.append(clean_target)
-            elif any(kw in path_and_anchor for kw in product_kws):
-                product_candidates.append(clean_target)
+                about_candidates.append(url)
             else:
-                other_candidates.append(clean_target)
+                other_candidates.append(url)
 
-        # Balanced selection: prioritize contact, then about, then products
         selected = []
-        if contact_candidates:
+        if leadership_candidates:
+            selected.append(leadership_candidates[0])
+        if contact_candidates and len(selected) < max_links:
             selected.append(contact_candidates[0])
         if about_candidates and len(selected) < max_links:
             selected.append(about_candidates[0])
-        if product_candidates and len(selected) < max_links:
-            selected.append(product_candidates[0])
+        if len(leadership_candidates) > 1 and len(selected) < max_links:
+            selected.append(leadership_candidates[1])
 
-        # Fill remaining slots if any
-        remaining_pool = (contact_candidates[1:] + about_candidates[1:] + product_candidates[1:] + other_candidates)
+        remaining_pool = (contact_candidates[1:] + about_candidates[1:] + other_candidates)
         for c in remaining_pool:
             if len(selected) >= max_links:
                 break
@@ -545,7 +672,7 @@ def discover_subpage_urls(homepage_url: str, raw_html: str, max_links: int = 3) 
 
 async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tuple[str, str]:
     """
-    Fetches candidate homepage and concurrently fetches 2-3 prioritized sub-pages (Contact, About, Products).
+    Fetches candidate homepage and concurrently fetches 2-3 prioritized sub-pages (Leadership, Contact, About).
     Combines contents into a rich evidence block and returns (combined_text, evidence_source_label).
     """
     # 1. Fetch raw HTML for homepage to extract text and sub-page links
@@ -555,19 +682,19 @@ async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tup
     if not homepage_text:
         return "", "none"
 
-    # 2. Discover prioritized sub-pages (Guaranteed Contact + About/Products)
+    # 2. Discover prioritized sub-pages (Leadership + Contact + About) via intelligent navbar detection
     subpage_urls = discover_subpage_urls(url, raw_html, max_links=3)
 
     if not subpage_urls:
         return homepage_text, "homepage only"
 
-    # 3. Concurrently fetch the sub-pages with short timeout (3.0s max)
+    # 3. Concurrently fetch the sub-pages with short timeout (3.5s max)
     sub_results = await asyncio.gather(
-        *[fetch_url_content(sub_url, timeout=3.0) for sub_url in subpage_urls],
+        *[fetch_url_content(sub_url, timeout=3.5) for sub_url in subpage_urls],
         return_exceptions=True
     )
 
-    combined_text = homepage_text[:1800]
+    combined_text = homepage_text[:2500]
     fetched_sources = ["homepage"]
 
     for idx, sub_url in enumerate(subpage_urls):
@@ -579,7 +706,8 @@ async def fetch_url_content_with_subpages(url: str, timeout: float = 4.0) -> Tup
             except Exception:
                 path_name = sub_url
             fetched_sources.append(path_name)
-            combined_text += f"\n\n--- SUBPAGE EVIDENCE ({path_name}) ---\n{res[:1200]}"
+            # Retain up to 3500 chars per subpage so deep leadership bios and emails are not cut off
+            combined_text += f"\n\n--- SUBPAGE EVIDENCE ({path_name}) ---\n{res[:3500]}"
 
     source_label = " + ".join(fetched_sources)
     return combined_text, source_label
@@ -615,9 +743,11 @@ async def fetch_dedicated_contact_emails(base_url: str) -> dict:
     all_phones = []
     contact_page = None
 
+    target_dom = parsed.netloc.replace("www.", "").strip()
+
     for idx, res in enumerate(results):
         if isinstance(res, str) and res.strip():
-            contacts = extract_regex_contacts(res, probe_paths[idx])
+            contacts = extract_regex_contacts(res, probe_paths[idx], target_domain=target_dom)
             emails = contacts.get("emails", [])
             phones = contacts.get("phones", [])
             if emails:
@@ -720,11 +850,12 @@ async def scrape_pages_concurrent(base_url: str) -> str:
         base_url,
         f"{base}/contact",
         f"{base}/contact-us",
-        f"{base}/en/contact",
-        f"{base}/en/contact-us",
-        f"{base}/en-ca/contact-us",
         f"{base}/about",
         f"{base}/about-us",
+        f"{base}/team",
+        f"{base}/our-team",
+        f"{base}/leadership",
+        f"{base}/management",
     ]
 
     # Fetch homepage first to discover deep localized contact links
@@ -748,25 +879,19 @@ async def scrape_pages_concurrent(base_url: str) -> str:
         if any(e.lower() for e in h_emails if '@' in e and not any(ex in e.lower() for ex in _exclude)):
             found_email = True
 
-    # LAYER 1: Parallel HTTP scraping across candidate & discovered URLs with early exit
-    if not found_email:
-        tasks = [asyncio.create_task(fetch_url_content(u, timeout=2.5)) for u in candidate_urls if u != base_url]
-
-        for completed in asyncio.as_completed(tasks):
-            try:
-                content = await completed
-                if content and len(content.strip()) > 20:
-                    contents.append(content)
-                    emails = EMAIL_RE.findall(content)
-                    valid = [e.lower() for e in emails if '@' in e and not any(ex in e.lower() for ex in _exclude)]
-                    if valid:
-                        found_email = True
-                        for t in tasks:
-                            if not t.done():
-                                t.cancel()
-                        break
-            except Exception:
-                pass
+    # LAYER 1: Parallel HTTP scraping across candidate & discovered URLs
+    tasks = [asyncio.create_task(fetch_url_content(u, timeout=2.5)) for u in candidate_urls[:6] if u != base_url]
+    for completed in asyncio.as_completed(tasks):
+        try:
+            content = await completed
+            if content and len(content.strip()) > 20:
+                contents.append(content)
+                emails = EMAIL_RE.findall(content)
+                valid = [e.lower() for e in emails if '@' in e and not any(ex in e.lower() for ex in _exclude)]
+                if valid:
+                    found_email = True
+        except Exception:
+            pass
 
     combined = "\n\n".join(contents)
 
@@ -898,7 +1023,9 @@ async def enrich_contacts(data: EnrichRequest):
     content = await scrape_pages_concurrent(normalized_url)
 
     # Step 2: 100% programmatic regex extraction (zero AI hallucination)
-    scanner          = extract_regex_contacts(content, source_url=normalized_url)
+    from urllib.parse import urlparse
+    site_domain = urlparse(normalized_url).netloc.replace("www.", "").strip()
+    scanner          = extract_regex_contacts(content, source_url=normalized_url, target_domain=site_domain)
     emails           = scanner["emails"]
     phones           = scanner["phones"]
     email_meta       = scanner["email_meta"]
@@ -960,7 +1087,6 @@ Return ONLY a valid JSON object (no markdown, no extra text):
     footprint_emails = []
     verification_status = "unverified"
     try:
-        from urllib.parse import urlparse
         dom = urlparse(normalized_url).netloc.replace("www.", "")
         if dom:
             from contact_enricher_pro import enrich_company_contacts_advanced
@@ -969,6 +1095,7 @@ Return ONLY a valid JSON object (no markdown, no extra text):
                     domain=dom,
                     company_name=data.company_name,
                     existing_emails=emails,
+                    website_text=content,
                     timeout=8.0
                 ),
                 timeout=9.0
@@ -976,20 +1103,24 @@ Return ONLY a valid JSON object (no markdown, no extra text):
             decision_makers = pro_intel.get("decision_makers", [])
             footprint_emails = pro_intel.get("footprint_emails", [])
             
-            # Merge enriched emails
+            # Merge enriched emails, enforcing strict company domain ownership & MX
             if pro_intel.get("all_emails"):
-                emails = list(dict.fromkeys(emails + pro_intel["all_emails"]))
+                merged = pro_intel["all_emails"] + emails
+                emails = [
+                    e for e in dict.fromkeys(merged)
+                    if is_valid_email(e, domain=dom, check_mx=True)
+                ]
             
-            # If we found a strictly verified decision-maker or if no primary email was found initially
-            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
+            # Prioritize direct decision-maker email (STRICTLY VERIFIED ONLY)
+            strict_dm = next((dm for dm in decision_makers if dm.get("email") and dm.get("strictly_verified")), None)
             if strict_dm and strict_dm.get("email"):
                 primary_email = strict_dm["email"]
-                source_label = f"Verified: {strict_dm.get('role', 'Decision Maker')} ({strict_dm.get('name')})"
-                verification_status = "smtp_verified"
+                source_label = f"Direct: {strict_dm.get('role', 'Executive')} ({strict_dm.get('name')})"
+                verification_status = strict_dm.get("verification_status", "verified")
             elif not primary_email and pro_intel.get("primary_email"):
                 primary_email = pro_intel["primary_email"]
-                source_label = "Web Footprint & Domain MX Verified"
-                verification_status = "mx_verified"
+                source_label = "Website / Discovered Contact"
+                verification_status = "discovered_contact"
     except Exception as pro_e:
         print(f"[ContactEnricherPro] Fallback to standard contacts: {pro_e}")
 
@@ -1000,8 +1131,8 @@ Return ONLY a valid JSON object (no markdown, no extra text):
     # Step 5: Return complete response with ALL required fields
     return {
         "primary_email":        primary_email,
-        "all_emails":           intel.get("emails", emails),
-        "phones":               intel.get("phones", phones),
+        "all_emails":           emails,
+        "phones":               phones,
         "linkedin_company":     linkedin_company,
         "linkedin_people":      linkedin_people,
         "contact_page_url":     contact_page_url,
@@ -1012,7 +1143,7 @@ Return ONLY a valid JSON object (no markdown, no extra text):
         "footprint_emails":     footprint_emails,
         "verification_status":  verification_status,
         # Backward-compatible fields:
-        "emails":               intel.get("emails", emails),
+        "emails":               emails,
         "stakeholder":          decision_makers[0].get("name") if decision_makers else intel.get("stakeholder", "Not found"),
         "context_snippet":      intel.get("context_snippet", "Not found"),
         "email_source_context": intel.get("email_source_context", source_context),
@@ -1353,9 +1484,13 @@ async def deep_enrich(data: EnrichRequest):
             decision_makers = pro_intel.get("decision_makers", [])
             footprint_emails = pro_intel.get("footprint_emails", [])
             if pro_intel.get("all_emails"):
-                emails = list(dict.fromkeys(emails + pro_intel["all_emails"]))
-            
-            strict_dm = next((dm for dm in decision_makers if dm.get("strictly_verified")), None)
+                merged = emails + pro_intel["all_emails"]
+                emails = [
+                    e for e in dict.fromkeys(merged)
+                    if is_valid_email(e, domain=dom, check_mx=True)
+                ]
+
+            strict_dm = next((dm for dm in decision_makers if dm.get("email") and dm.get("strictly_verified")), None)
             if strict_dm and strict_dm.get("email"):
                 primary_email = strict_dm["email"]
                 source_label = f"Verified: {strict_dm.get('role', 'Executive')} ({strict_dm.get('name')})"
@@ -1395,7 +1530,10 @@ class SaveClientRequest(BaseModel):
     status: Optional[str] = "Pending"
     email: Optional[str] = None
     phone: Optional[str] = None
-    phones: Optional[str] = None
+    phones: Optional[Any] = None
+    emails: Optional[Any] = None
+    decisionMakers: Optional[Any] = None
+    decision_makers: Optional[Any] = None
     linkedin_company: Optional[str] = None
     contactSource: Optional[dict] = None
     logoUrl: Optional[str] = None
@@ -1411,7 +1549,9 @@ class UpdateClientRequest(BaseModel):
     status: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
-    phones: Optional[str] = None
+    phones: Optional[Any] = None
+    emails: Optional[Any] = None
+    decision_makers: Optional[Any] = None
     linkedin_company: Optional[str] = None
     contact_source_url: Optional[str] = None
     contact_source_page: Optional[str] = None
@@ -1423,6 +1563,21 @@ class UpdateClientRequest(BaseModel):
 @app.post("/api/save-client")
 async def api_save_client(data: SaveClientRequest, current_company: Company = Depends(get_current_company_optional)):
     cs = data.contactSource or {}
+    emails_list = data.emails if isinstance(data.emails, list) else ([data.email] if data.email else [])
+    dm_list = data.decisionMakers if isinstance(data.decisionMakers, list) else (
+        data.decision_makers if isinstance(data.decision_makers, list) else []
+    )
+    import json as _json
+    emails_json = _json.dumps(emails_list) if emails_list else None
+    decision_makers_json = _json.dumps(dm_list) if dm_list else None
+
+    # Priority email: first decision maker email if available, else first emails_list entry, else data.email
+    chosen_email = data.email
+    if dm_list and isinstance(dm_list, list) and dm_list[0].get("email"):
+        chosen_email = dm_list[0]["email"]
+    elif emails_list:
+        chosen_email = emails_list[0]
+
     client_row = database.save_client(
         name=data.name,
         website=data.website,
@@ -1431,9 +1586,11 @@ async def api_save_client(data: SaveClientRequest, current_company: Company = De
         trust_score=data.trustScore or 0,
         relevance_reason=data.relevanceReason,
         status=data.status or "Pending",
-        email=data.email,
+        email=chosen_email,
         phone=data.phone,
-        phones=data.phones,
+        phones=(", ".join(data.phones) if isinstance(data.phones, list) else (str(data.phones) if data.phones else None)),
+        emails_json=emails_json,
+        decision_makers_json=decision_makers_json,
         linkedin_company=data.linkedin_company,
         contact_source_url=cs.get("url"),
         contact_source_page=cs.get("page"),
@@ -1540,6 +1697,20 @@ def send_real_email_endpoint(
             status_code=400,
             detail="SMTP email and password are not configured."
         )
+
+    # 1.5 Pre-flight SMTP Check: Prevent hard bounce on invalid / nonexistent mailboxes
+    try:
+        from smtp_verify import verify_email_smtp as check_recipient_smtp
+        verify_chk = check_recipient_smtp(req.recipient_email.strip(), timeout=5.0)
+        if verify_chk.get("status") in ("invalid", "invalid_mx"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recipient email '{req.recipient_email.strip()}' is invalid or undeliverable ({verify_chk.get('status')}). Send aborted to protect sender reputation."
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
     # 2. Build MIME Message
     msg = MIMEMultipart("alternative")
