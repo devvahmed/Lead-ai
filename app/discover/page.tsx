@@ -953,18 +953,22 @@ export default function DiscoverPage() {
     }
   }, []);
 
-  const handleSuggestIndustries = useCallback(async () => {
-    const input = suggestInput.trim();
-    if (!input) return;
+  const [seenIndustries, setSeenIndustries] = useState<string[]>([]);
+
+  const handleSuggestIndustries = useCallback(async (rotate: boolean = false) => {
+    const savedCompany = getSavedCompany();
+    const fallbackService = savedCompany?.services || savedCompany?.industry || 'B2B Software & Consulting';
+    const input = suggestInput.trim() || fallbackService;
 
     setSuggestLoading(true);
     setSuggestError(null);
 
     try {
+      const excludeList = rotate ? seenIndustries : [];
       const res = await fetch('/api/suggest-industries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input, exclude: excludeList }),
       });
 
       const data = await res.json();
@@ -972,16 +976,22 @@ export default function DiscoverPage() {
         throw new Error(data.error || 'Failed to get industry suggestions');
       }
 
-      const fetchedSuggestions = data.suggestions || [];
-      setSuggestions(fetchedSuggestions);
-      setQuickTags(fetchedSuggestions.map((s: IndustrySuggestion) => s.industry));
-      setSelectedIndustries([]);
+      const fetchedSuggestions: IndustrySuggestion[] = data.suggestions || [];
+      if (fetchedSuggestions.length > 0) {
+        setSuggestions(fetchedSuggestions);
+        setQuickTags(fetchedSuggestions.map((s: IndustrySuggestion) => s.industry));
+        setSeenIndustries((prev) => {
+          const combined = new Set([...prev, ...fetchedSuggestions.map((s) => s.industry)]);
+          // Keep recent 60 to prevent infinite memory growth while keeping rotation fresh
+          return Array.from(combined).slice(-60);
+        });
+      }
     } catch (err) {
       setSuggestError(err instanceof Error ? err.message : 'Failed to suggest industries');
     } finally {
       setSuggestLoading(false);
     }
-  }, [suggestInput]);
+  }, [suggestInput, seenIndustries]);
 
   // Real-time instant & debounced suggestions as user types in the suggestInput box
   useEffect(() => {
@@ -1715,25 +1725,42 @@ export default function DiscoverPage() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleSuggestIndustries();
+                    handleSuggestIndustries(false);
                   }
                 }}
                 placeholder={suggestPlaceholder}
                 className="w-full h-10 pl-3.5 pr-3 py-2 bg-surface border border-outline-variant rounded-xl text-[14px] text-on-surface focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
               />
             </div>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleSuggestIndustries}
-              disabled={suggestLoading || !suggestInput.trim()}
-              className="bg-surface border border-outline-variant text-on-surface font-semibold text-[14px] px-5 py-2 h-10 rounded-xl hover:bg-surface-variant hover:text-primary transition-colors flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 shrink-0"
-            >
-              <span className={`material-symbols-outlined text-[18px] text-primary ${suggestLoading ? 'animate-spin' : ''}`}>
-                {suggestLoading ? 'progress_activity' : 'auto_awesome'}
-              </span>
-              {suggestLoading ? 'Thinking...' : 'Suggest Industries'}
-            </motion.button>
+            <div className="flex items-center gap-2">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleSuggestIndustries(false)}
+                disabled={suggestLoading}
+                className="bg-surface border border-outline-variant text-on-surface font-semibold text-[14px] px-5 py-2 h-10 rounded-xl hover:bg-surface-variant hover:text-primary transition-colors flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 shrink-0"
+              >
+                <span className={`material-symbols-outlined text-[18px] text-primary ${suggestLoading ? 'animate-spin' : ''}`}>
+                  {suggestLoading ? 'progress_activity' : 'auto_awesome'}
+                </span>
+                {suggestLoading ? 'Finding High-Yield Niches...' : 'Suggest Industries'}
+              </motion.button>
+              {suggestions.length > 0 && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => handleSuggestIndustries(true)}
+                  disabled={suggestLoading}
+                  title="Generate brand new, non-repeating industries"
+                  className="bg-primary/10 border border-primary/30 text-primary font-semibold text-[13px] px-3.5 py-2 h-10 rounded-xl hover:bg-primary/20 transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-50 shrink-0"
+                >
+                  <span className={`material-symbols-outlined text-[16px] ${suggestLoading ? 'animate-spin' : ''}`}>
+                    cached
+                  </span>
+                  New Niches
+                </motion.button>
+              )}
+            </div>
           </div>
 
           {/* Suggest Error */}
@@ -1748,12 +1775,12 @@ export default function DiscoverPage() {
           {suggestions.length > 0 && (
             <div className="mt-2 pt-3 border-t border-outline-variant/60 flex flex-col gap-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-secondary flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[14px] text-primary">touch_app</span>
-                  Click industry chip to auto-fill search field
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-secondary flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Targeted & High Lead Yield (Click to select)
                 </span>
                 <span className="text-[11px] text-secondary">
-                  {suggestions.length} suggested industries
+                  {suggestions.length} high-reach industries
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1778,6 +1805,9 @@ export default function DiscoverPage() {
                           {isSelected ? 'check_circle' : 'add_circle'}
                         </span>
                         <span>{item.industry}</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded ml-auto">
+                          Easy Leads
+                        </span>
                       </div>
                       {item.reason && (
                         <span className={`text-[11px] leading-tight pl-5 max-w-xs ${isSelected ? 'text-primary/80 font-normal' : 'text-secondary'}`}>

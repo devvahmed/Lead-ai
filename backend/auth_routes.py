@@ -371,13 +371,46 @@ def get_dashboard_stats_endpoint(current_company: Company = Depends(get_current_
     return stats
 
 
+_SUGGESTED_HISTORY = {}  # {company_id: set_of_previously_suggested_tags}
+
+LEAD_RICH_FALLBACK_TAGS = [
+    "Dental & Medical Clinics",
+    "Commercial Roofing & HVAC",
+    "Real Estate Brokerages",
+    "Accounting & CPA Firms",
+    "Logistics & Trucking Fleets",
+    "Shopify & D2C Brands",
+    "Law Firms & Attorneys",
+    "IT Support & Managed Services",
+    "Auto Dealerships & Repair",
+    "Commercial Cleaning Services",
+    "Gyms & Fitness Centers",
+    "Wholesale Distributors",
+    "Hotels & Event Venues",
+    "Plumbing & Electrical Contractors",
+    "Staffing & Recruitment Agencies",
+    "Solar Energy Installers",
+    "Architecture & Design Studios",
+    "Property Management",
+    "Private Wealth Advisors",
+    "Food & Beverage Producers",
+]
+
+
 @router.get("/suggest-industries", response_model=SuggestedIndustriesResponse)
-def get_suggested_industries_endpoint(current_company: Company = Depends(get_current_company)):
+def get_suggested_industries_endpoint(
+    refresh: bool = False,
+    current_company: Company = Depends(get_current_company)
+):
     """
-    Generates dynamic, company-profile aware target industry recommendations using Groq LLM.
-    Caches results per company_id to respect Groq API rate limits.
+    Generates dynamic, company-profile aware target industry recommendations.
+    Focuses on plain-English, easy-to-understand industries with high lead contactability.
+    Rotates suggestions when refreshed or repeatedly called so new niches appear.
     """
     company_id = current_company.id
+    if refresh and company_id in _SUGGESTED_INDUSTRIES_CACHE:
+        del _SUGGESTED_INDUSTRIES_CACHE[company_id]
+
     cached = _SUGGESTED_INDUSTRIES_CACHE.get(company_id)
     if cached:
         cached_time, cached_tags = cached
@@ -388,37 +421,69 @@ def get_suggested_industries_endpoint(current_company: Company = Depends(get_cur
                 suggested_industries=cached_tags
             )
         else:
-            del _SUGGESTED_INDUSTRIES_CACHE[company_id]  # Expired; discard and re-generate
+            del _SUGGESTED_INDUSTRIES_CACHE[company_id]
 
-    default_tags = ["Fintech", "Healthcare", "E-Commerce & Retail", "Software & SaaS", "Logistics & Supply Chain", "Industrial Manufacturing"]
+    history_set = _SUGGESTED_HISTORY.setdefault(company_id, set())
+    # Exclude previously suggested to keep suggestions fresh
+    avoid_list = list(history_set)[-18:]
+
+    import random
+    available_fallback = [t for t in LEAD_RICH_FALLBACK_TAGS if t not in history_set]
+    if len(available_fallback) < 6:
+        # Reset history if exhausted so rotation can loop cleanly
+        history_set.clear()
+        available_fallback = list(LEAD_RICH_FALLBACK_TAGS)
+    random.shuffle(available_fallback)
+    default_tags = available_fallback[:6]
+
+    avoid_clause = f"\nDO NOT suggest any of these previously shown industries (MUST BE BRAND NEW):\n{json.dumps(avoid_list)}" if avoid_list else ""
 
     prompt = f"""
     We are '{current_company.name}', operating in the '{current_company.industry or 'Technology'}' sector.
     Our products/services: '{current_company.services or current_company.description or 'B2B Products & Services'}'.
-    Our ideal target clients: '{current_company.target_customers or 'Enterprise B2B companies'}'.
+    Our ideal target clients: '{current_company.target_customers or 'Commercial B2B businesses'}'.
 
-    Identify 6 high-value target industry verticals or sectors where our solutions provide strong business ROI.
-    Return ONLY a JSON object with key "suggested_industries" containing 6 short industry titles (1-3 words each), e.g.:
-    {{"suggested_industries": ["Fintech & Banking", "Healthcare Systems", "Cloud Infrastructure", "E-Commerce", "Government", "Logistics"]}}
+    Identify 6 HIGH-VALUE, TARGETED COMMERCIAL INDUSTRIES that urgently need our services and have HIGH LEAD CONTACTABILITY (easy to find owner/executive emails online).
+
+    CRITICAL RULES:
+    1. EASY TO UNDERSTAND: Use plain, everyday business names (e.g. "Dental Clinics", "Commercial Roofing", "Real Estate Brokerages", "Logistics & Trucking", "Shopify Brands", "Accounting & CPA Firms", "Law Firms", "Auto Dealerships"). NEVER use convoluted academic jargon.
+    2. HIGH CONTACTABILITY: Choose industries where businesses have active websites, published team pages, and easily reachable decision-makers (owners, partners, CEOs).{avoid_clause}
+
+    Return ONLY a JSON object with key "suggested_industries" containing 6 short industry titles (2-4 words each), e.g.:
+    {{"suggested_industries": ["Dental & Medical Clinics", "Commercial Roofing Contractors", "Real Estate Brokerages", "Logistics & Trucking", "Accounting & CPA Firms", "Shopify E-Commerce Brands"]}}
     """
 
     try:
         from discover import call_ollama
         raw_content = call_ollama(
             prompt=prompt,
-            system_prompt="You are a B2B strategy analyst. Output valid JSON.",
-            temperature=0.2,
-            max_tokens=300,
+            system_prompt="You are a practical B2B lead generation strategist. Return strictly valid JSON with easy-to-understand, high-lead-density industry names.",
+            temperature=0.7,
+            max_tokens=350,
             timeout=10.0
         )
         if raw_content:
-            raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
-            raw_content = re.sub(r'\s*```$', '', raw_content)
+            raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content.strip())
+            raw_content = re.sub(r'\s*```$', '', raw_content.strip())
             parsed = json.loads(raw_content)
             industries = parsed.get("suggested_industries", default_tags)
             if isinstance(industries, list) and len(industries) > 0:
-                clean_tags = [str(t).strip() for t in industries if isinstance(t, str) and len(t.strip()) > 0][:6]
-                _SUGGESTED_INDUSTRIES_CACHE[company_id] = (time.time(), clean_tags)  # Store with timestamp
+                clean_tags = [
+                    str(t).strip() for t in industries
+                    if isinstance(t, str) and len(t.strip()) > 1 and str(t).strip() not in history_set
+                ]
+                # If LLM didn't return enough non-repeating tags, fill with fallback
+                for tag in default_tags:
+                    if len(clean_tags) >= 6:
+                        break
+                    if tag not in clean_tags:
+                        clean_tags.append(tag)
+
+                clean_tags = clean_tags[:6]
+                for tag in clean_tags:
+                    history_set.add(tag)
+
+                _SUGGESTED_INDUSTRIES_CACHE[company_id] = (time.time(), clean_tags)
                 return SuggestedIndustriesResponse(
                     company_id=company_id,
                     company_name=current_company.name,
@@ -427,8 +492,13 @@ def get_suggested_industries_endpoint(current_company: Company = Depends(get_cur
     except Exception as e:
         print(f"[Suggest Industries Ollama Error]: {e}")
 
+    for tag in default_tags:
+        history_set.add(tag)
+    _SUGGESTED_INDUSTRIES_CACHE[company_id] = (time.time(), default_tags)
+
     return SuggestedIndustriesResponse(
         company_id=company_id,
         company_name=current_company.name,
         suggested_industries=default_tags
     )
+

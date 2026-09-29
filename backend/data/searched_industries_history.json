@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-09-22T07:12:23.970493+00:00",
-  "total_scanned": 154,
+  "last_updated": "2026-09-29T08:19:07.707852+00:00",
+  "total_scanned": 157,
   "scanned_set": [
     "agricultural livestock feedlot monitoring",
     "agricultural produce grading packing",
@@ -16,10 +16,13 @@
     "cold chain freight brokerage for fresh fruit exporters",
     "cold chain logistics providers for perishable food transport",
     "cold storage warehouses",
+    "commercial hvac refrigeration contractors",
     "commercial hvac refrigeration service management",
     "commercial solar epc contractors",
+    "commercial vehicle auto dealerships",
     "construction subcontractor field billing",
     "custom cnc milling tooling for aerospace tier1 suppliers",
+    "dental orthodontic clinics",
     "dental practice management patient portals",
     "desalination plant reverse osmosis membrane replacement services",
     "directtoconsumer ecommerce brands",
@@ -1758,6 +1761,39 @@
         "parent_industry": "Advanced Manufacturing",
         "target_service_fit": "Process automation and digital transformation for autonomous B2B lead generation systems",
         "mode": "dynamic_industry"
+      }
+    },
+    {
+      "niche": "Commercial Vehicle & Auto Dealerships",
+      "service_context": "AI Automation & Chatbots",
+      "country": "United States",
+      "scanned_at": "2026-09-29T08:18:50.788741+00:00",
+      "metadata": {
+        "parent_industry": "Automotive Retail & Commercial Fleets",
+        "target_service_fit": "Virtual showroom appointment booking, automated trade-in value estimates, and service maintenance SMS",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Dental & Orthodontic Clinics",
+      "service_context": "AI Automation & Chatbots",
+      "country": "United States",
+      "scanned_at": "2026-09-29T08:19:00.344328+00:00",
+      "metadata": {
+        "parent_industry": "Healthcare & Dental Practices",
+        "target_service_fit": "Automated patient booking, hygiene recall messaging, and modern digital practice tools",
+        "mode": "target_companies"
+      }
+    },
+    {
+      "niche": "Commercial HVAC & Refrigeration Contractors",
+      "service_context": "AI Automation & Chatbots",
+      "country": "United States",
+      "scanned_at": "2026-09-29T08:19:07.707791+00:00",
+      "metadata": {
+        "parent_industry": "Mechanical Contracting & Facility Services",
+        "target_service_fit": "Commercial service maintenance contract proposals, emergency dispatch, and field invoicing tools",
+        "mode": "target_companies"
       }
     }
   ]

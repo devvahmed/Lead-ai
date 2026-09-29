@@ -2,15 +2,17 @@
 Context-Aware Dynamic Industry Generator (Step 2).
 
 This module analyzes our master ai_enriched_profile (or user services) and generates
-contextually aligned target industries, sub-verticals, and localized search dorks.
-It maintains an active history log to ensure it NEVER scans the same industry
-sub-vertical repeatedly across discovery sessions.
+contextually aligned, high-converting target industries, sub-verticals, and localized search dorks.
+It focuses on plain-English, easy-to-understand industries with high lead contactability
+(public team pages, reachable owners, valid domain emails) and maintains an active history log
+to ensure it rotates dynamically and NEVER scans the same industry sub-vertical repeatedly.
 """
 
 import asyncio
 import json
 import logging
 import os
+import random
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -207,11 +209,7 @@ class IndustryHistoryTracker:
 def build_searxng_dorks(industry_niche: str, country: str = "") -> List[str]:
     """
     Constructs high-converting operational search queries/dorks for SearXNG and Outbound Workers.
-    
-    Examples:
-    - '"{niche}" "{country}" ("contact us" OR "about us" OR "our operations")'
-    - '"{niche}" "{country}" ("hiring" OR "careers" OR "manual process")'
-    - 'site:.{country_tld} "{niche}" ("equipment" OR "manufacturing" OR "services")'
+    Focuses on queries that bring up real business domains with reachable contact pages.
     """
     clean_niche = industry_niche.strip()
     clean_country = country.strip()
@@ -220,204 +218,238 @@ def build_searxng_dorks(industry_niche: str, country: str = "") -> List[str]:
     dorks: List[str] = []
     loc = f" {clean_country}" if clean_country else ""
 
-    # Dork 1: Official Website & Contact Operations
+    # Dork 1: Official Website & Contact Page
     dorks.append(f'{clean_niche} official website contact us{loc}'.strip())
 
-    # Dork 2: Commercial Products & Services
-    dorks.append(f'{clean_niche} commercial providers products services{loc}'.strip())
+    # Dork 2: Commercial Providers, Services & About Us
+    dorks.append(f'{clean_niche} company services about us{loc}'.strip())
 
     # Dork 3: TLD-scoped or Leading Providers
     if tld and tld not in ("com", ""):
-        dorks.append(f'{clean_niche} store brands site:.{tld}')
+        dorks.append(f'{clean_niche} companies site:.{tld}')
     else:
-        dorks.append(f'leading {clean_niche} brands{loc}'.strip())
+        dorks.append(f'leading {clean_niche} firms{loc}'.strip())
 
-    # Dork 4: Business Operations & Customer Care
-    dorks.append(f'{clean_niche} business operations about us{loc}'.strip())
+    # Dork 4: Business Team & Leadership Directory
+    dorks.append(f'{clean_niche} our team leadership contact{loc}'.strip())
 
     return dorks
 
 
-# ─── 3. Heuristic Industry Matrix (Robust Fallback) ───────────────────────────
+# ─── 3. Easy-to-Understand, High-Contactability Industry Matrix ────────────────
+# All categories use clear, everyday business names where finding real owner, partner,
+# doctor, or director emails online is reliable and high-yield.
 HEURISTIC_INDUSTRY_MATRIX: List[Dict[str, Any]] = [
-    # ── Category 1: Computer Vision & Visual AI ───────────────────────────────
+    # ── Category 1: Healthcare, Dental & Wellness Clinics ──
     {
-        "service_triggers": ["computer vision", "vision", "image processing", "visual ai", "ocr", "camera", "inspection"],
-        "niche": "Textile Fabric Quality Control",
-        "parent_industry": "Textile Manufacturing",
-        "target_service_fit": "Automated visual defect detection on high-speed loom fabric to eliminate manual inspection scrap",
-        "rationale": "High scrap rates and human fatigue during continuous fabric inspection create urgent ROI for automated vision",
-        "dork_keywords": ["weaving mills", "fabric inspection", "textile quality assurance"]
+        "service_triggers": ["ai", "chatbot", "software", "marketing", "web", "healthcare", "clinic", "dental"],
+        "niche": "Dental & Orthodontic Clinics",
+        "parent_industry": "Healthcare & Dental Practices",
+        "target_service_fit": "Automated patient booking, hygiene recall messaging, and modern digital practice tools",
+        "rationale": "High-margin practices with active doctor and practice owner profiles published on their websites",
+        "dork_keywords": ["dental practice clinic", "orthodontic clinic contact", "cosmetic dentistry practice"]
     },
     {
-        "service_triggers": ["computer vision", "vision", "defect", "ai", "inspection"],
-        "niche": "Pharmaceutical Packaging Inspection",
-        "parent_industry": "Pharmaceutical Manufacturing",
-        "target_service_fit": "High-throughput optical blister pack, vial seal, and label alignment verification",
-        "rationale": "Strict regulatory compliance (FDA/EMA) requires 100% verification of packaging and lot codes",
-        "dork_keywords": ["blister packaging", "pharma packaging facility", "sterile vial inspection"]
+        "service_triggers": ["ai", "software", "marketing", "healthcare", "clinic", "wellness"],
+        "niche": "Dermatology & Cosmetic Medical Clinics",
+        "parent_industry": "Specialty Healthcare & Aesthetics",
+        "target_service_fit": "Online consultation booking, patient intake automation, and local digital reputation management",
+        "rationale": "High-ticket aesthetic procedures; clinic owners and medical directors are prominently listed online",
+        "dork_keywords": ["dermatology clinic", "aesthetic medical center", "cosmetic skin clinic"]
     },
     {
-        "service_triggers": ["computer vision", "vision", "sorting", "fmcg", "ai"],
-        "niche": "FMCG Defect Detection & Sorting",
-        "parent_industry": "Food & Beverage Processing",
-        "target_service_fit": "Automated conveyor-belt defect grading, foreign body rejection, and container seal checking",
-        "rationale": "Mass-market brand reputation and food safety regulations penalize packaging flaws and product contamination",
-        "dork_keywords": ["food packaging line", "bottling plant", "sorting and grading facility"]
-    },
-    {
-        "service_triggers": ["computer vision", "vision", "agriculture", "ai"],
-        "niche": "Agricultural Produce Grading & Packing",
-        "parent_industry": "Agri-Business & Post-Harvest",
-        "target_service_fit": "Automated multi-spectral optical sizing and defect grading for fruit, citrus, and vegetable packing houses",
-        "rationale": "Export markets enforce strict visual grade standards; manual sorting cannot meet packing-house speeds",
-        "dork_keywords": ["fruit packing facility", "citrus packing house", "post-harvest grading"]
-    },
-    {
-        "service_triggers": ["computer vision", "vision", "automotive", "hardware"],
-        "niche": "Automotive Assembly Line Visual QC",
-        "parent_industry": "Automotive Tier 1 Suppliers",
-        "target_service_fit": "Weld bead integrity, gap-and-flush measurement, and paint surface flaw detection",
-        "rationale": "Tier 1 automotive suppliers face severe OEM penalties for defective parts reaching final assembly",
-        "dork_keywords": ["tier 1 auto stamping", "automotive welding facility", "chassis assembly plant"]
+        "service_triggers": ["software", "marketing", "automation", "healthcare", "therapy"],
+        "niche": "Physical Therapy & Chiropractic Centers",
+        "parent_industry": "Outpatient Healthcare & Rehabilitation",
+        "target_service_fit": "Care plan reminders, online patient re-booking, and automated billing intake",
+        "rationale": "Clinic owners and lead practitioners listed with direct office email and phone numbers",
+        "dork_keywords": ["physical therapy clinic", "chiropractic care center", "sports rehabilitation practice"]
     },
 
-    # ── Category 2: Automated Inventory & Logistics ───────────────────────────
+    # ── Category 2: Commercial Trades & Contractors ──
     {
-        "service_triggers": ["automated inventory", "inventory", "warehouse", "automation", "wms", "rfid", "barcode"],
-        "niche": "Cold Storage Warehouses",
-        "parent_industry": "Logistics & Temperature Controlled Storage",
-        "target_service_fit": "Automated temperature-proof pallet tracking, batch expiration monitoring, and picking optimization",
-        "rationale": "Freezer environments cause high worker turnover; automated inventory tracking reduces labor exposure and spoilage",
-        "dork_keywords": ["cold storage facility", "refrigerated logistics", "cold chain distribution"]
+        "service_triggers": ["ai", "automation", "software", "marketing", "web", "construction", "roofing", "contractor"],
+        "niche": "Commercial Roofing Contractors",
+        "parent_industry": "Commercial Construction & Building Envelope",
+        "target_service_fit": "Commercial building roof replacement lead generation, digital estimate proposals, and job dispatch",
+        "rationale": "High average ticket size ($30k-$200k); owners, estimators, and project managers listed on websites",
+        "dork_keywords": ["commercial roofing contractor", "industrial roofing company", "roof replacement specialists"]
     },
     {
-        "service_triggers": ["automated inventory", "inventory", "spare parts", "distribution", "erp", "supply chain"],
-        "niche": "Automotive Spare Parts Distributors",
-        "parent_industry": "Wholesale Automotive Aftermarket",
-        "target_service_fit": "High-SKU dynamic bin location mapping, automated cross-referencing, and rapid pick-and-pack tracking",
-        "rationale": "Managing tens of thousands of fast-moving part numbers leads to severe inventory inaccuracies without modern automation",
-        "dork_keywords": ["auto parts distribution center", "aftermarket parts warehouse", "replacement parts supplier"]
-    },
-    {
-        "service_triggers": ["automated inventory", "inventory", "fulfillment", "ecommerce", "warehouse", "3pl"],
-        "niche": "E-commerce Fulfillment Centers",
-        "parent_industry": "Third-Party Logistics (3PL)",
-        "target_service_fit": "Real-time multi-channel stock synchronization, automated wave picking, and automated return processing",
-        "rationale": "Peak shopping seasons overwhelm manual stock counting and produce costly shipping delays and stockouts",
-        "dork_keywords": ["3pl fulfillment center", "ecommerce warehousing", "contract packing facility"]
-    },
-    {
-        "service_triggers": ["automated inventory", "inventory", "chemical", "hazardous", "materials"],
-        "niche": "Chemical & Hazardous Materials Storage",
-        "parent_industry": "Industrial Chemicals & Distribution",
-        "target_service_fit": "Automated segregation enforcement, SDS compliance tracking, and container weight telematics",
-        "rationale": "Strict environmental and safety liability mandates automated, auditable tracking of volatile substances",
-        "dork_keywords": ["chemical distribution warehouse", "hazmat storage facility", "bulk chemical terminal"]
-    },
-    {
-        "service_triggers": ["automated inventory", "inventory", "medical", "hospital", "pharma"],
-        "niche": "Medical Supplies & Hospital Logistics",
-        "parent_industry": "Healthcare Supply Chain",
-        "target_service_fit": "Automated consignment inventory tracking, UDI compliance scanning, and sterility expiration management",
-        "rationale": "Hospitals require zero-stockout reliability for surgical trays and critical disposables",
-        "dork_keywords": ["medical supply distribution", "hospital logistics center", "surgical supplies warehouse"]
-    },
-
-    # ── Category 3: Web & Mobile App Development / Custom Software ────────────
-    {
-        "service_triggers": ["web", "mobile", "app development", "custom software", "software", "saas", "fullstack"],
-        "niche": "Specialty Freight Dispatch & Brokering",
-        "parent_industry": "Commercial Transportation",
-        "target_service_fit": "Custom mobile driver apps with proof-of-delivery capture, route telematics, and automated broker portals",
-        "rationale": "Regional trucking companies lose margins using generic spreadsheets instead of dedicated real-time dispatch tools",
-        "dork_keywords": ["freight dispatch service", "heavy haul logistics", "flatbed transport operations"]
-    },
-    {
-        "service_triggers": ["web", "mobile", "app development", "custom software", "field", "operations"],
-        "niche": "Commercial HVAC & Refrigeration Service Management",
+        "service_triggers": ["ai", "automation", "software", "marketing", "hvac", "mechanical", "contractor"],
+        "niche": "Commercial HVAC & Refrigeration Contractors",
         "parent_industry": "Mechanical Contracting & Facility Services",
-        "target_service_fit": "Custom field service dispatch software, technician offline mobile diagnostic checklists, and customer portals",
-        "rationale": "Emergency response service agreements require rapid technician routing and digital job sign-offs",
-        "dork_keywords": ["commercial hvac contractor", "industrial refrigeration services", "mechanical engineering facility services"]
+        "target_service_fit": "Commercial service maintenance contract proposals, emergency dispatch, and field invoicing tools",
+        "rationale": "Recurring commercial maintenance contracts; operations managers and owners readily accessible",
+        "dork_keywords": ["commercial hvac contractor", "industrial refrigeration service", "heating and cooling company"]
     },
     {
-        "service_triggers": ["web", "mobile", "custom software", "healthcare", "crm"],
-        "niche": "Dental Practice Management & Patient Portals",
-        "parent_industry": "Multi-Location Healthcare Clinics",
-        "target_service_fit": "Custom multi-clinic patient onboarding, insurance pre-authorization workflows, and automated appointment rescheduling",
-        "rationale": "Growing dental groups need customized integrations between legacy imaging equipment and modern billing engines",
-        "dork_keywords": ["dental group practice", "orthodontic clinic headquarters", "multi-location dental center"]
+        "service_triggers": ["automation", "software", "marketing", "web", "electrical", "solar", "contractor"],
+        "niche": "Commercial Electrical & Solar Installers",
+        "parent_industry": "Electrical Contracting & Renewable Energy",
+        "target_service_fit": "Commercial energy retrofit proposals, solar rooftop feasibility pipelines, and client portals",
+        "rationale": "Fast-expanding sector with active project directors and company owners seeking commercial clients",
+        "dork_keywords": ["commercial electrical contractor", "turnkey solar installer", "commercial solar company"]
     },
     {
-        "service_triggers": ["web", "mobile", "custom software", "construction", "billing"],
-        "niche": "Construction Subcontractor Field Billing",
-        "parent_industry": "Commercial Construction",
-        "target_service_fit": "Custom mobile progress billing, daily field log verification, and change-order approval tracking",
-        "rationale": "Delayed change orders and paper field reports cause major cash-flow bottlenecks for trade subcontractors",
-        "dork_keywords": ["commercial electrical contractor", "drywall and framing contractor", "steel fabrication construction"]
+        "service_triggers": ["software", "marketing", "automation", "plumbing", "contractor", "services"],
+        "niche": "Commercial Plumbing & Mechanical Services",
+        "parent_industry": "Mechanical Services & Facility Contractors",
+        "target_service_fit": "Preventative maintenance agreements, emergency response dispatching, and digital work orders",
+        "rationale": "High commercial urgency; business principals and dispatch directors openly listed on contact pages",
+        "dork_keywords": ["commercial plumbing contractor", "industrial mechanical piping", "commercial drain cleaning"]
     },
 
-    # ── Category 4: Digital Marketing & B2B Lead Gen ───────────────────────────
+    # ── Category 3: Professional Services (Legal & Accounting) ──
     {
-        "service_triggers": ["marketing", "lead generation", "growth", "seo", "sales", "ads"],
+        "service_triggers": ["ai", "software", "marketing", "web", "legal", "law", "attorney"],
+        "niche": "Corporate & Commercial Law Firms",
+        "parent_industry": "Legal Advisory Services",
+        "target_service_fit": "Client intake automation, secure document review, and high-authority practice area visibility",
+        "rationale": "Managing partners and practice attorneys publish official business bios with direct email addresses",
+        "dork_keywords": ["corporate law firm", "business attorneys practice", "commercial litigation lawyers"]
+    },
+    {
+        "service_triggers": ["ai", "automation", "software", "marketing", "accounting", "cpa", "tax", "finance"],
+        "niche": "Accounting, Tax & CPA Firms",
+        "parent_industry": "Accounting & Financial Consulting",
+        "target_service_fit": "Secure client document portals, automated bookkeeping reconciliation, and client advisory marketing",
+        "rationale": "CPA partners and practice leaders maintain active corporate websites with direct partner emails",
+        "dork_keywords": ["certified public accountants firm", "cpa accounting practice", "tax advisory consultants"]
+    },
+    {
+        "service_triggers": ["marketing", "lead generation", "finance", "wealth", "advisory"],
+        "niche": "Private Wealth & Financial Advisory Practices",
+        "parent_industry": "Wealth Management & Financial Planning",
+        "target_service_fit": "High-net-worth client lead generation, automated quarterly performance reporting, and CRM workflows",
+        "rationale": "Licensed advisors publish verifiable business contact information on company websites and directories",
+        "dork_keywords": ["wealth management advisors", "private wealth advisory firm", "financial planning consultants"]
+    },
+
+    # ── Category 4: Real Estate & Property Management ──
+    {
+        "service_triggers": ["ai", "chatbot", "marketing", "software", "web", "real estate", "property"],
         "niche": "Boutique Commercial Real Estate Brokerages",
         "parent_industry": "Commercial Real Estate",
-        "target_service_fit": "Hyper-targeted outbound tenant acquisition, industrial property deal flow campaigns, and investor lead pipelines",
-        "rationale": "Brokers need high-value commercial tenant leads for warehouse and office parks with large deal commissions",
-        "dork_keywords": ["commercial real estate brokerage", "industrial leasing agency", "commercial property advisors"]
+        "target_service_fit": "Targeted corporate tenant acquisition, industrial property deal flow campaigns, and investor portals",
+        "rationale": "Commercial brokers publish their direct emails and mobile numbers on property listing pages",
+        "dork_keywords": ["commercial real estate brokerage", "industrial leasing agency", "commercial property brokers"]
     },
     {
-        "service_triggers": ["marketing", "lead generation", "sales", "industrial", "auction"],
-        "niche": "Industrial Equipment Auctioneers",
-        "parent_industry": "Heavy Machinery & Capital Equipment",
-        "target_service_fit": "Global bidder acquisition funnels, heavy plant asset remarketing campaigns, and surplus inventory liquidation outreach",
-        "rationale": "Auction houses need qualified industrial buyers within short 30-day marketing windows before scheduled sales",
-        "dork_keywords": ["industrial equipment auction", "machinery liquidation company", "plant asset auctions"]
-    },
-
-    # ── Category 5: Universal / General B2B Services ──────────────────────────
-    {
-        "service_triggers": ["automation", "consulting", "b2b", "services", "general"],
-        "niche": "Precision CNC Machine Shops",
-        "parent_industry": "Industrial Precision Manufacturing",
-        "target_service_fit": "Automated production scheduling, vendor quotation portal, and scrap reduction analytics",
-        "rationale": "High machine capital costs require maximizing spindle uptime and fast turnaround on complex RFQs",
-        "dork_keywords": ["precision cnc machining", "aerospace precision machine shop", "custom metal fabrication facility"]
-    },
-    {
-        "service_triggers": ["automation", "consulting", "b2b", "services", "general"],
-        "niche": "Commercial Solar EPC Contractors",
-        "parent_industry": "Renewable Energy & Power Engineering",
-        "target_service_fit": "Commercial rooftop feasibility tracking, automated permitting workflows, and asset monitoring portals",
-        "rationale": "Massive influx of commercial energy transition projects creates high demand for modern operational tooling",
-        "dork_keywords": ["commercial solar epc", "turnkey solar installer", "industrial solar systems provider"]
+        "service_triggers": ["ai", "software", "automation", "real estate", "property"],
+        "niche": "Residential Property Management Companies",
+        "parent_industry": "Real Estate Property Management",
+        "target_service_fit": "Tenant maintenance ticket routing, automated lease renewal notices, and owner financial dashboards",
+        "rationale": "Property managers actively monitor inboxes for new property owner management contracts",
+        "dork_keywords": ["residential property management", "apartment management company", "rental property managers"]
     },
 
-    # ── Category 6: AI Chatbots & Conversational Support ───────────────────────
+    # ── Category 5: Logistics, Trucking & Supply Chain ──
     {
-        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "customer support ai", "virtual assistant"],
-        "niche": "Direct-to-Consumer E-Commerce Brands",
+        "service_triggers": ["ai", "software", "automation", "logistics", "freight", "trucking", "shipping"],
+        "niche": "Freight Brokerages & Logistics Fleets",
+        "parent_industry": "Commercial Freight & Transportation",
+        "target_service_fit": "Automated shipper rate quoting, driver dispatch tracking, and digital bill-of-lading workflows",
+        "rationale": "Freight dispatchers and logistics coordinators are responsive to tools that reduce manual dispatch friction",
+        "dork_keywords": ["freight brokerage company", "specialized trucking logistics", "flatbed freight transport"]
+    },
+    {
+        "service_triggers": ["software", "automation", "warehouse", "logistics", "inventory"],
+        "niche": "E-Commerce 3PL Fulfillment Centers",
+        "parent_industry": "Warehousing & Order Fulfillment",
+        "target_service_fit": "Multi-channel stock synchronization, automated wave picking, and customer shipping tracking portals",
+        "rationale": "Fulfillment warehouse directors actively search for software and automation partners to scale throughput",
+        "dork_keywords": ["3pl fulfillment warehouse", "ecommerce fulfillment company", "contract packing logistics"]
+    },
+    {
+        "service_triggers": ["automation", "logistics", "food", "warehouse", "cold storage"],
+        "niche": "Refrigerated Cold Storage Warehouses",
+        "parent_industry": "Temperature Controlled Food Logistics",
+        "target_service_fit": "Automated pallet tracking, temperature logging, and expiration date monitoring",
+        "rationale": "Facility managers and logistics heads listed on warehouse location pages with public office contacts",
+        "dork_keywords": ["cold storage warehousing", "refrigerated logistics provider", "cold chain distribution facility"]
+    },
+
+    # ── Category 6: E-Commerce, Retail & Consumer Brands ──
+    {
+        "service_triggers": ["ai", "chatbot", "marketing", "ecommerce", "shopify", "retail", "web"],
+        "niche": "Shopify D2C Apparel & Fashion Brands",
         "parent_industry": "E-Commerce & Online Retail",
-        "target_service_fit": "24/7 automated customer support, cart abandonment recovery, order tracking, and personalized product recommendations",
-        "rationale": "High consumer ticket volume and cart abandonment create direct revenue upside for automated conversational bots",
-        "dork_keywords": ["clothing brands online store", "retail consumer brands store", "online shopping store"]
+        "target_service_fit": "24/7 AI conversational shopping assistance, cart abandonment recovery, and paid ad creative funnels",
+        "rationale": "Brand founders and e-commerce directors are highly accessible via website press/support pages and social bios",
+        "dork_keywords": ["clothing brand online shop", "apparel brand store", "d2c fashion brand website"]
     },
     {
-        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "appointment"],
-        "niche": "Multi-Location Dental & Medical Clinics",
-        "parent_industry": "Healthcare Clinics",
-        "target_service_fit": "24/7 patient appointment scheduling, service pricing FAQs, and intake qualification bots",
-        "rationale": "Clinics lose after-hours patient bookings without instant conversational triage and appointment scheduling",
-        "dork_keywords": ["dental clinic book appointment", "medical practice patient care", "private clinic contact"]
+        "service_triggers": ["marketing", "ecommerce", "shopify", "health", "supplements"],
+        "niche": "Health, Wellness & Supplement Brands",
+        "parent_industry": "Nutraceuticals & Online Consumer Health",
+        "target_service_fit": "Repeat subscription automation, customer review funnels, and compliance-ready landing pages",
+        "rationale": "Fast-growing consumer brands with accessible brand managers and marketing decision-makers",
+        "dork_keywords": ["wellness supplement brand", "health nutrition online shop", "organic dietary supplements store"]
+    },
+
+    # ── Category 7: IT Services, Managed Services & SaaS ──
+    {
+        "service_triggers": ["ai", "software", "cybersecurity", "cloud", "it", "managed services"],
+        "niche": "IT Support & Managed Service Providers (MSPs)",
+        "parent_industry": "Information Technology Services",
+        "target_service_fit": "Outbound business client acquisition funnels, cybersecurity monitoring, and cloud backup integrations",
+        "rationale": "MSP owners and technical directors maintain public business sites and respond readily to B2B opportunities",
+        "dork_keywords": ["managed it services provider", "business it support company", "network security it consultants"]
     },
     {
-        "service_triggers": ["ai chatbot", "chatbot", "chatbots", "conversational ai", "real estate"],
-        "niche": "Residential Real Estate Brokerages",
-        "parent_industry": "Real Estate Agencies",
-        "target_service_fit": "Instant property inquiry handling, automated viewing bookings, and buyer budget pre-qualification",
-        "rationale": "Realtors need immediate response times on property listings to convert high-intent prospective buyers",
-        "dork_keywords": ["real estate agency properties for sale", "property management company", "luxury real estate brokers"]
+        "service_triggers": ["marketing", "sales", "lead generation", "saas", "software"],
+        "niche": "B2B SaaS & Cloud Software Companies",
+        "parent_industry": "Enterprise Software",
+        "target_service_fit": "Targeted enterprise outbound prospecting, product-led marketing funnels, and developer integration support",
+        "rationale": "Founders, CMOs, and sales leaders actively publish verified corporate emails and team rosters",
+        "dork_keywords": ["b2b saas company", "cloud software provider", "enterprise software platform"]
+    },
+
+    # ── Category 8: Automotive & Equipment Dealerships ──
+    {
+        "service_triggers": ["ai", "chatbot", "marketing", "software", "auto", "car"],
+        "niche": "Commercial Vehicle & Auto Dealerships",
+        "parent_industry": "Automotive Retail & Commercial Fleets",
+        "target_service_fit": "Virtual showroom appointment booking, automated trade-in value estimates, and service maintenance SMS",
+        "rationale": "General managers and sales directors listed on staff pages with direct work email addresses",
+        "dork_keywords": ["commercial truck dealership", "auto dealership inventory", "car sales and leasing center"]
+    },
+
+    # ── Category 9: Commercial Cleaning, Facilities & Hospitality ──
+    {
+        "service_triggers": ["automation", "software", "marketing", "cleaning", "facility"],
+        "niche": "Commercial Cleaning & Janitorial Companies",
+        "parent_industry": "Facility Management & Commercial Cleaning",
+        "target_service_fit": "Automated site inspection quality reporting, crew shift dispatching, and office cleaning contract bidding",
+        "rationale": "Business owners and regional operations managers actively bid on commercial contracts; transparent contact info",
+        "dork_keywords": ["commercial janitorial services", "office cleaning company", "commercial facility cleaning"]
+    },
+    {
+        "service_triggers": ["ai", "chatbot", "web", "hospitality", "hotel", "resort"],
+        "niche": "Boutique Hotels & Event Venues",
+        "parent_industry": "Hospitality & Event Services",
+        "target_service_fit": "Direct booking website funnels, 24/7 guest concierge chatbots, and corporate event inquiry management",
+        "rationale": "General managers, sales coordinators, and event directors openly publish their direct contact details",
+        "dork_keywords": ["boutique hotel official website", "event venue corporate meetings", "luxury resort reservations"]
+    },
+
+    # ── Category 10: Staffing, Recruiting & Education ──
+    {
+        "service_triggers": ["ai", "software", "recruitment", "staffing", "hr"],
+        "niche": "Staffing & Executive Recruitment Agencies",
+        "parent_industry": "Human Resources & Talent Acquisition",
+        "target_service_fit": "Automated candidate sourcing, resume screening workflows, and corporate client hiring pipelines",
+        "rationale": "Recruitment agency partners and branch directors are in the business of networking and easily reached",
+        "dork_keywords": ["executive search firm", "staffing agency services", "technical recruitment consultants"]
+    },
+    {
+        "service_triggers": ["automation", "software", "b2b", "wholesale", "distributor"],
+        "niche": "Wholesale Food & Beverage Distributors",
+        "parent_industry": "Wholesale Trade & Distribution",
+        "target_service_fit": "B2B wholesale customer ordering portals, tiered pricing catalogs, and automated invoice delivery",
+        "rationale": "Sales directors and procurement managers listed on company catalogs with direct business email addresses",
+        "dork_keywords": ["wholesale food distributor", "beverage distribution company", "specialty food supplier warehouse"]
     }
 ]
 
@@ -431,7 +463,8 @@ async def generate_target_industry_niches(
     use_llm: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Expands our services and company profile into specific, non-obvious B2B operational niches.
+    Expands our services and company profile into specific, easy-to-understand B2B operational niches
+    with high lead contactability.
     First attempts LLM expansion (Ollama) if use_llm=True, filtering out previously scanned niches via tracker.
     Falls back gracefully to the rich Heuristic Industry Matrix if LLM is offline, timed out, or disabled.
     """
@@ -449,40 +482,39 @@ async def generate_target_industry_niches(
             from discover import async_call_ollama
 
             country_context = f" operating in {clean_country}" if clean_country else ""
-            scanned_samples = tracker.get_scanned_niches(clean_services)[:10]
-            avoid_clause = f"\nDO NOT suggest any of these previously scanned niches:\n{json.dumps(scanned_samples)}" if scanned_samples else ""
+            scanned_samples = tracker.get_scanned_niches(clean_services)[-15:]
+            avoid_clause = f"\nDO NOT suggest any of these previously scanned niches (MUST BE BRAND NEW):\n{json.dumps(scanned_samples)}" if scanned_samples else ""
 
-            prompt = f"""You are a Senior Principal B2B Market Strategy and Industrial Engineering Architect.
+            prompt = f"""You are a Senior Principal B2B Market Strategy and Outbound Lead Generation Architect.
 
 Analyze our company profile and capabilities:
 OUR CAPABILITIES / SERVICES: "{clean_services}"{country_context}
 
 YOUR TASK:
-Identify {limit + 3} HIGHLY SPECIFIC, NON-OBVIOUS operational B2B industries, manufacturing verticals, or specialized enterprise niches that have acute operational bottlenecks where our capabilities solve painful, expensive problems.
+Identify {limit + 3} TARGETED, COMMERCIAL B2B INDUSTRIES OR NICHES where businesses have an acute need for our capabilities and WHERE LEADS ARE EASY TO FIND ONLINE.
 
 CRITICAL REQUIREMENTS:
-1. Avoid generic high-level labels (e.g. do NOT say just "Healthcare", "Retail", "Manufacturing", or "E-commerce").
-2. Choose specific operational niches (e.g., "Textile Fabric Quality Control", "Cold Storage Warehouses", "Commercial HVAC Fleet Dispatch", "FMCG Defect Sorting").
-3. Explain the specific operational fit and why they have urgent commercial demand for our capabilities.{avoid_clause}
+1. EASY TO UNDERSTAND: Use plain, clean, universally recognized business names (e.g., "Dental Clinics", "Commercial Roofing Contractors", "Real Estate Brokerages", "Logistics & Trucking", "Accounting & CPA Firms", "Shopify E-Commerce Brands", "Law Firms", "Auto Dealerships"). Avoid complex academic or obscure manufacturing jargon (e.g. do NOT say "In-Silico Metrology" or "Textile Loom Sensor Integration").
+2. HIGH LEAD CONTACTABILITY (LEADS MILNA ASAN HO): Focus strictly on industries where businesses maintain active public websites with team/staff directories, published email addresses, and accessible decision-makers (Owners, Founders, Partners, CEOs, Directors).
+3. TARGETED OPERATIONAL FIT: Explain in ONE plain sentence how our services solve their everyday bottlenecks or generate revenue.{avoid_clause}
 
 Respond ONLY with a valid JSON array of objects. Do not include markdown codeblocks or preamble.
 Each object must have these exact keys:
-- "niche": string (the exact specific sub-vertical name)
+- "niche": string (plain-English specific industry name)
 - "parent_industry": string (broad sector)
-- "target_service_fit": string (how our services solve their operational bottleneck)
-- "rationale": string (why this niche is primed to buy)
+- "target_service_fit": string (how our services solve their operational problem)
+- "rationale": string (why this niche is primed to buy and easy to contact)
 - "dork_keywords": list of strings (3 operational search keywords)"""
 
             raw_output = await async_call_ollama(
                 prompt=prompt,
-                system_prompt="You are a B2B Market Analyst. Return strictly a raw JSON array of objects. No markdown, no commentary.",
-                temperature=0.3,
-                max_tokens=800,
+                system_prompt="You are a practical B2B lead generation strategist. Return strictly a raw JSON array of objects. Use clean, easy-to-understand industry names where finding real business leads and emails is fast and reliable.",
+                temperature=0.7,
+                max_tokens=850,
                 timeout=10.0
             )
 
             if raw_output:
-                # Clean possible markdown wrapping
                 cleaned = re.sub(r"^```json\s*", "", raw_output.strip(), flags=re.MULTILINE)
                 cleaned = re.sub(r"^```\s*", "", cleaned, flags=re.MULTILINE)
                 start_bracket = cleaned.find("[")
@@ -497,9 +529,9 @@ Each object must have these exact keys:
                                 if not tracker.is_scanned(niche_name, clean_services):
                                     niches.append({
                                         "niche": niche_name,
-                                        "parent_industry": item.get("parent_industry", "Industrial B2B"),
+                                        "parent_industry": item.get("parent_industry", "Commercial B2B Services"),
                                         "target_service_fit": item.get("target_service_fit", f"Operational deployment of {clean_services}"),
-                                        "rationale": item.get("rationale", "High commercial ROI and operational need"),
+                                        "rationale": item.get("rationale", "High commercial ROI and reachable business decision-makers"),
                                         "dork_keywords": item.get("dork_keywords", [niche_name])
                                     })
                                     if len(niches) >= limit:
@@ -508,7 +540,7 @@ Each object must have these exact keys:
         except Exception as e:
             logger.warning(f"[DynamicIndustryGenerator] LLM expansion unavailable ({e}); utilizing Heuristic Matrix")
 
-    # Attempt 2: Fallback / Heuristic Matrix Expansion
+    # Attempt 2: Fallback / Heuristic Matrix Expansion with Smart Randomization
     if len(niches) < limit:
         services_lower = clean_services.lower()
 
@@ -522,7 +554,9 @@ Each object must have these exact keys:
                 match_score += 0.5
             scored_candidates.append((match_score, item))
 
-        # Sort descending by match relevance
+        # Shuffle candidates first so items with identical scores rotate freshly
+        random.shuffle(scored_candidates)
+        # Sort descending by match relevance (preserving shuffle within score ties)
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
 
         for score, item in scored_candidates:
@@ -573,14 +607,14 @@ async def get_next_discovery_batch(
     )
 
     if not candidate_niches:
-        # Fallback to general precision machining if all standard niches are exhausted
-        default_niche = "Precision Industrial Manufacturing Facilities"
+        # Fallback to easy-to-reach commercial contractors if all standard niches are exhausted
+        default_niche = "Commercial Real Estate & Property Management"
         primary = {
             "niche": default_niche,
-            "parent_industry": "Advanced Manufacturing",
+            "parent_industry": "Commercial Real Estate",
             "target_service_fit": f"Process automation and digital transformation for {clean_services}",
-            "rationale": "High capital equipment expenditure with strong demand for operational efficiency",
-            "dork_keywords": ["precision manufacturing", "industrial facility"]
+            "rationale": "High-value commercial clients with publicly listed brokers and property executives",
+            "dork_keywords": ["commercial real estate brokers", "property management company"]
         }
         candidate_niches = [primary]
     else:
