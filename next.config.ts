@@ -26,6 +26,8 @@ const nextConfig: NextConfig = {
   },
   // Allow LAN access from client PCs so dev resources and React hydration execute properly
   allowedDevOrigins: [
+    '100.91.220.98',
+    '100.91.220.98:3000',
     '192.168.0.112',
     '192.168.0.112:3000',
     '192.168.0.107',
