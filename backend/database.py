@@ -198,6 +198,18 @@ def init_db():
     except Exception:
         pass
 
+    # Pattern Library — stores learned corporate email schemas per domain
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS domain_email_patterns (
+            domain      TEXT PRIMARY KEY,
+            pattern     TEXT NOT NULL,
+            anchor_email TEXT,
+            confidence  INTEGER DEFAULT 50,
+            last_verified TEXT,
+            created_at  TEXT
+        )
+    """)
+
     # Clean up legacy 4-country default array from previous versions
     try:
         cursor.execute("""
@@ -1143,5 +1155,86 @@ def get_recent_automation_leads(company_id: int = 1, limit: int = 20, csv_file_p
     finally:
         conn.close()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pattern Library — domain_email_patterns helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_domain_pattern(
+    domain: str,
+    pattern: str,
+    anchor_email: str,
+    confidence: int = 50
+) -> bool:
+    """
+    Save or update a domain's email pattern in the Pattern Library.
+    Uses INSERT OR REPLACE so repeated discoveries reinforce the record.
+    Returns True on success, False on error.
+    """
+    if not domain or not pattern:
+        return False
+    clean_domain = domain.lower().replace("www.", "").strip()
+    now = datetime.utcnow().isoformat()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO domain_email_patterns
+                (domain, pattern, anchor_email, confidence, last_verified, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(domain) DO UPDATE SET
+                pattern       = excluded.pattern,
+                anchor_email  = excluded.anchor_email,
+                confidence    = MAX(domain_email_patterns.confidence, excluded.confidence),
+                last_verified = excluded.last_verified
+        """, (clean_domain, pattern, anchor_email, confidence, now, now))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[PatternLib] save_domain_pattern error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_domain_pattern(domain: str) -> Optional[Dict]:
+    """
+    Get the stored email pattern for a domain.
+    Returns a dict with keys: domain, pattern, anchor_email, confidence, last_verified
+    or None if no pattern is known.
+    Only returns patterns with confidence >= 50 (Zero-Fake Policy).
+    """
+    if not domain:
+        return None
+    clean_domain = domain.lower().replace("www.", "").strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        row = cursor.execute("""
+            SELECT domain, pattern, anchor_email, confidence, last_verified, created_at
+            FROM domain_email_patterns
+            WHERE domain = ? AND confidence >= 50
+        """, (clean_domain,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_all_patterns() -> List[Dict]:
+    """
+    List all learned domain patterns for debugging / admin dashboard.
+    Returns list of dicts ordered by confidence DESC.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        rows = cursor.execute("""
+            SELECT domain, pattern, anchor_email, confidence, last_verified, created_at
+            FROM domain_email_patterns
+            ORDER BY confidence DESC, last_verified DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 

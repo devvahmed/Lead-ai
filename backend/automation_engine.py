@@ -34,6 +34,12 @@ from email_outreach import (
     fetch_url_content_with_subpages,
     is_valid_email
 )
+from smtp_verify import verify_email_smtp
+from contact_enricher_pro import (
+    is_generic_email,
+    learn_and_save_pattern,
+    infer_decision_maker_email,
+)
 
 logger = logging.getLogger("automation_engine")
 
@@ -46,6 +52,51 @@ def _get_lock(company_id: int) -> asyncio.Lock:
     if company_id not in _task_locks:
         _task_locks[company_id] = asyncio.Lock()
     return _task_locks[company_id]
+
+
+async def find_decision_maker_name(domain: str, company_name: str) -> Optional[str]:
+    """
+    SearXNG LinkedIn dork se company ka decision maker name dhundho.
+    Query: site:linkedin.com/in/ "{company}" (CEO OR founder OR director)
+    LinkedIn URL slug se name extract karo.
+    Returns cleaned full name string, or None.
+    """
+    try:
+        from discover import search_searxng_or_ddg
+        queries = [
+            f'site:linkedin.com/in/ "{company_name}" CEO OR founder OR director',
+            f'site:linkedin.com/in/ "{domain}" CEO OR founder OR owner',
+        ]
+        for query in queries:
+            try:
+                results = await asyncio.wait_for(
+                    search_searxng_or_ddg(query, page=1), timeout=7.0
+                )
+            except Exception:
+                continue
+            for r in (results or [])[:8]:
+                url_str = r.get("url") or r.get("link") or ""
+                title   = r.get("title") or ""
+                # Extract name from LinkedIn URL slug: /in/firstname-lastname-xxxxx
+                slug_match = re.search(
+                    r'linkedin\.com/in/([a-z0-9]+(?:-[a-z0-9]+){1,4})', url_str, re.I
+                )
+                if slug_match:
+                    slug = slug_match.group(1)
+                    # Remove trailing short alphanumeric IDs (e.g. -ab12cd)
+                    slug = re.sub(r'-[a-z0-9]{4,}$', '', slug)
+                    name_parts = [p.capitalize() for p in slug.split('-') if p.isalpha()]
+                    if 2 <= len(name_parts) <= 4:
+                        return ' '.join(name_parts)
+                # Fallback: parse name from title (e.g. "Ahmed Khan - CEO at Acme")
+                title_match = re.match(
+                    r'^([A-Z][a-z]+ [A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*[-|]', title
+                )
+                if title_match:
+                    return title_match.group(1)
+    except Exception as e:
+        logger.debug(f"[DM Finder] Error for {domain}: {e}")
+    return None
 
 
 async def start_automation(
@@ -399,22 +450,102 @@ async def _autonomous_harvesting_daemon(company_id: int):
                     print(f"[Automation Daemon] ⏩ Skipped {domain} (Legitimate operating business, but no contact email on website).", flush=True)
                     continue
 
+                # ── GENERIC EMAIL RESCUE GATE ──────────────────────────────────
+                # Generic email found (info@, hello@, sales@, …).
+                # Before skipping, try to infer a decision-maker email via Pattern Library.
+                inferred: Optional[dict] = None
+                if is_generic_email(primary_email):
+                    dm_name = await find_decision_maker_name(domain, company_name)
+                    if dm_name:
+                        inferred = infer_decision_maker_email(dm_name, domain)
+
+                    if inferred:
+                        # Override primary_email with the inferred address
+                        primary_email = inferred["email"]
+                        print(
+                            f"[Automation Daemon] 🔍 Inferred DM email for {domain}: "
+                            f"{primary_email} (name={dm_name}, pattern={inferred['pattern']})",
+                            flush=True
+                        )
+                    else:
+                        skip_reason = (
+                            f"DM name found ({dm_name}), no pattern/SMTP match"
+                            if dm_name
+                            else f"Only generic email: {primary_email}"
+                        )
+                        print(f"[Automation Daemon] ⏩ Skipped {domain} ({skip_reason})", flush=True)
+                        continue
+
+                # ── SMTP VERIFICATION (Zero Hallucination Rule) ─────────────────
+                # For inferred emails the status is already resolved; for scraped
+                # personal emails we run a fresh SMTP handshake here.
+                if inferred:
+                    smtp_status = inferred["status"]
+                else:
+                    smtp_result = verify_email_smtp(primary_email)
+                    smtp_status = smtp_result.get("status")
+
+                # Drop invalid emails
+                if smtp_status in ("invalid", "invalid_mx"):
+                    print(f"[Automation Daemon] ❌ Dropped {domain} (Email invalid: {primary_email}, status: {smtp_status})", flush=True)
+                    continue
+
+                # Catch-all: only save if it came from pattern inference (badge = Likely unverified)
+                if smtp_status == "catch_all" and not inferred:
+                    print(f"[Automation Daemon] ⚠️ Catch-all detected for {domain} ({primary_email}) — skipping", flush=True)
+                    continue
+
+                # Unknown SMTP status — skip unless inferred (pattern-backed)
+                if smtp_status not in ("valid", "catch_all") and not inferred:
+                    print(f"[Automation Daemon] ⏩ Skipped {domain} (SMTP status: {smtp_status})", flush=True)
+                    continue
+
+                if smtp_status not in ("valid", "catch_all"):
+                    print(f"[Automation Daemon] ⏩ Skipped {domain} (SMTP status: {smtp_status})", flush=True)
+                    continue
+
+                # ── Pattern Learning: Personal email found — teach the Pattern Library ──
+                if not inferred and not is_generic_email(primary_email):
+                    learn_and_save_pattern(primary_email, domain, confidence=85)
+
+                # ── Determine badge based on email origin + SMTP result ─────────────
+                if inferred:
+                    badge = inferred["badge"]   # "Direct Reach / Verified" or "Likely (unverified)"
+                else:
+                    badge = "Direct Reach / Verified"
+
                 # ── Genuine Verified Lead Found! Atomically Save to SQLite & Live CSV ──
                 lead_payload = {
-                    "name": company_name,
+                    "name":    company_name,
                     "website": url,
-                    "domain": domain,
-                    "email": primary_email,
-                    "phone": primary_phone,
+                    "domain":  domain,
+                    "email":   primary_email,
+                    "phone":   primary_phone,
                     "country": active_country,
                     "industry": current_niche,
                     "trustScore": max(min_trust, 82),
-                    "outreachAngle": f"Identified operating enterprise in {current_niche}. Tailored offering: {target_service}."
+                    "outreachAngle": f"Identified operating enterprise in {current_niche}. Tailored offering: {target_service}.",
+                    "smtp_status":  smtp_status,
+                    "smtp_verified": smtp_status == "valid",
+                    "badge":  badge,
+                    "inferred_from_pattern": bool(inferred),
+                    "pattern": inferred["pattern"] if inferred else None,
                 }
 
                 saved = database.save_automation_verified_lead(company_id, lead_payload)
                 if saved:
-                    print(f"[Automation Daemon] 🎯 VERIFIED LEAD HARVESTED -> {company_name} ({domain}) | Email: {primary_email} | Appended to CSV.", flush=True)
+                    if inferred:
+                        print(
+                            f"[Automation Daemon] 🎯 INFERRED + SMTP-VERIFIED → {company_name} ({domain}) | "
+                            f"Email: {primary_email} | Pattern: {inferred['pattern']} | Badge: {badge} | Appended to CSV.",
+                            flush=True
+                        )
+                    else:
+                        print(
+                            f"[Automation Daemon] 🎯 SMTP-VERIFIED LEAD → {company_name} ({domain}) | "
+                            f"Email: {primary_email} | SMTP: {smtp_status} | Appended to CSV.",
+                            flush=True
+                        )
 
                 # Polite pause between candidate probes
                 await asyncio.sleep(1.5)

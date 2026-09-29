@@ -34,6 +34,7 @@ from smtp_verify import (
     batch_verify_emails,
     get_email_tier_and_badge,
 )
+import database  # Pattern Library storage
 
 logger = logging.getLogger("contact_enricher_pro")
 
@@ -1908,4 +1909,176 @@ async def enrich_company_contacts_advanced(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pattern Library — Learning, Inference, and Decision Maker Email Resolution
+# ─────────────────────────────────────────────────────────────────────────────
 
+def learn_and_save_pattern(email: str, domain: str, confidence: int = 85) -> Optional[str]:
+    """
+    PART 2: Pattern Learning.
+    Jab bhi ek personal (non-generic) email mile, uska pattern extract
+    karke Pattern Library (database) mein save karo.
+
+    Returns detected pattern string, or None.
+    """
+    if not email or not domain or is_generic_email(email):
+        return None
+    clean_domain = domain.lower().replace("www.", "").strip()
+    email_domain = email.split("@")[-1].lower().strip() if "@" in email else ""
+    if email_domain != clean_domain:
+        return None  # Email belongs to a different domain; skip
+
+    detected_pattern = extract_email_pattern(email)
+    if not detected_pattern:
+        return None
+
+    saved = database.save_domain_pattern(
+        domain=clean_domain,
+        pattern=detected_pattern,
+        anchor_email=email,
+        confidence=confidence
+    )
+    if saved:
+        logger.info(
+            f"[Pattern Library] Learned: {clean_domain} -> '{detected_pattern}' (from {email})"
+        )
+        print(
+            f"[Pattern Library] Learned: {clean_domain} -> '{detected_pattern}' (from {email})",
+            flush=True
+        )
+    return detected_pattern
+
+
+def apply_pattern_to_name(person_name: str, domain: str, pattern: str) -> List[str]:
+    """
+    PART 3a: Candidate email generator.
+    Person name + known pattern -> list of candidate email addresses.
+
+    Examples:
+      person_name="Ahmed Khan", pattern="first"      -> ["ahmed@domain.com"]
+      person_name="Ahmed Khan", pattern="first.last" -> ["ahmed.khan@domain.com",
+                                                          "a.khan@domain.com",
+                                                          "ahmed.k@domain.com"]
+      person_name="Ahmed Khan", pattern="flast"      -> ["akhan@domain.com"]
+    """
+    candidates: List[str] = []
+    if not person_name or not domain or not pattern:
+        return candidates
+
+    clean_domain = domain.lower().replace("www.", "").strip()
+    name_parts = re.sub(r"[^a-zA-Z ]", "", person_name.strip()).split()
+    if not name_parts:
+        return candidates
+
+    f = name_parts[0].lower()               # first name
+    l = name_parts[-1].lower() if len(name_parts) > 1 else ""  # last name
+
+    # Primary candidate from the known pattern
+    primary = synthesize_by_pattern(f, l, clean_domain, pattern)
+    if primary:
+        candidates.append(primary)
+
+    # Secondary candidates: adjacent patterns for better coverage
+    SECONDARY_MAP: Dict[str, List[str]] = {
+        "first.last":  ["f.last", "flast", "first"],
+        "f.last":      ["first.last", "flast"],
+        "flast":       ["f.last", "first.last"],
+        "first_last":  ["first.last", "flast"],
+        "first-last":  ["first.last", "f.last"],
+        "firstlast":   ["first.last", "flast"],
+        "last.first":  ["first.last", "f.last"],
+        "first":       ["first.last", "flast"],
+        "first.l":     ["first.last", "f.last"],
+    }
+    for sec_pattern in SECONDARY_MAP.get(pattern, []):
+        sec_email = synthesize_by_pattern(f, l, clean_domain, sec_pattern)
+        if sec_email and sec_email not in candidates:
+            candidates.append(sec_email)
+
+    return [c for c in candidates if c]  # Filter out None / empty strings
+
+
+def infer_decision_maker_email(
+    person_name: str,
+    domain: str
+) -> Optional[Dict]:
+    """
+    PART 3b: Decision Maker Email Inference Engine.
+
+    Steps:
+    1. Pattern Library se domain ka pattern lo.
+    2. Agar pattern nahi / confidence < 50, return None.
+    3. apply_pattern_to_name() se candidates banao.
+    4. Har candidate ko SMTP verify karo (standalone_verify_email_smtp).
+    5. Pehla 'valid' wala return karo.
+    6. Agar koi 'catch_all' mile aur 'valid' nahi, usse return karo (unverified).
+    7. Agar koi bhi nahi, return None.
+
+    Returns:
+      {
+        "email":      "ahmed@bpl-dxb.com",
+        "status":     "valid" | "catch_all",
+        "badge":      "Direct Reach / Verified" | "Likely (unverified)",
+        "pattern":    "first",
+        "confidence": 85
+      }
+    or None
+    """
+    if not person_name or not domain:
+        return None
+
+    pattern_row = database.get_domain_pattern(domain)
+    if not pattern_row:
+        logger.debug(f"[Pattern Library] No pattern for {domain} — skipping inference")
+        return None
+
+    pattern    = pattern_row["pattern"]
+    confidence = pattern_row["confidence"]
+
+    # Zero-Fake Policy: only use patterns with confidence >= 50
+    if confidence < 50:
+        return None
+
+    candidates = apply_pattern_to_name(person_name, domain, pattern)
+    if not candidates:
+        return None
+
+    best_catch_all: Optional[Dict] = None
+
+    for candidate in candidates:
+        try:
+            result = standalone_verify_email_smtp(candidate)
+            status = result.get("status") if isinstance(result, dict) else str(result)
+        except Exception as e:
+            logger.debug(f"[Pattern Library] SMTP error for {candidate}: {e}")
+            continue
+
+        if status == "valid":
+            logger.info(
+                f"[Pattern Library] ✅ INFERRED VALID: {candidate} | pattern={pattern} | conf={confidence}"
+            )
+            return {
+                "email":      candidate,
+                "status":     "valid",
+                "badge":      "Direct Reach / Verified",
+                "pattern":    pattern,
+                "confidence": confidence,
+            }
+
+        if status == "catch_all" and best_catch_all is None:
+            best_catch_all = {
+                "email":      candidate,
+                "status":     "catch_all",
+                "badge":      "Likely (unverified)",
+                "pattern":    pattern,
+                "confidence": confidence,
+            }
+
+    # No valid found — return catch_all if available
+    if best_catch_all:
+        logger.info(
+            f"[Pattern Library] ⚠️ INFERRED CATCH-ALL: {best_catch_all['email']} | pattern={pattern}"
+        )
+        return best_catch_all
+
+    return None

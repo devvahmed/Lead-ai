@@ -30,6 +30,10 @@ interface AutomationStatusResponse {
     trust_score: number;
     outreach_angle: string;
     created_at: string;
+    badge?: string;
+    smtp_verified?: boolean;
+    inferred_from_pattern?: boolean;
+    pattern?: string;
   }>;
 }
 
@@ -948,8 +952,43 @@ export default function AutomationPage() {
                           {lead.name}
                         </a>
                       </td>
-                      <td className="py-3 px-4 text-emerald-400 font-bold">
-                        {lead.email}
+                      <td className="py-3 px-4">
+                        {/* Email + Badge */}
+                        <div className="flex flex-col gap-1.5">
+                          <span className="font-bold text-emerald-400 font-mono text-xs">
+                            {lead.email}
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {/* Primary badge */}
+                            {(() => {
+                              const badge = lead.badge || 'Direct Reach / Verified';
+                              const isVerified = badge === 'Direct Reach / Verified';
+                              const isLikely   = badge === 'Likely (unverified)';
+                              const isGeneral  = badge === 'General Contact';
+                              return (
+                                <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+                                  isVerified ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
+                                  isLikely   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
+                                  isGeneral  ? 'bg-slate-700/60 text-slate-400 border border-slate-600/50' :
+                                               'bg-slate-700/60 text-slate-400 border border-slate-600/50'
+                                }`}>
+                                  <span>{isVerified ? '✅' : isLikely ? '⚠️' : '📧'}</span>
+                                  {badge}
+                                </span>
+                              );
+                            })()}
+                            {/* Inferred tag */}
+                            {lead.inferred_from_pattern && (
+                              <span
+                                className="inline-flex items-center gap-0.5 rounded-md bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300"
+                                title={lead.pattern ? `Pattern: ${lead.pattern}` : 'Inferred from pattern library'}
+                              >
+                                <span className="text-[9px]">🔮</span>
+                                Inferred{lead.pattern ? ` (${lead.pattern})` : ''}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-slate-400">
                         {lead.phone || '—'}
