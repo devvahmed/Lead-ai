@@ -2058,6 +2058,9 @@ async def stream_discovery(
                     if not card_snippet or len(card_snippet) < 25:
                         card_snippet = reason[:280] if reason else f"{company_name} is a verified operating company in {clean_keyword}."
 
+                    from smart_dom_crawler import get_cached_crawl_res
+                    cached_crawl = get_cached_crawl_res(domain) if domain else None
+
                     from email_outreach import extract_regex_contacts, fetch_dedicated_contact_emails
                     scraped_text_for_contacts = scraped if scraped else f"{title} {snippet}"
                     contacts_extracted = extract_regex_contacts(scraped_text_for_contacts, url, target_domain=domain)
@@ -2065,6 +2068,15 @@ async def stream_discovery(
                     found_emails = contacts_extracted.get("emails", [])
                     found_phones = contacts_extracted.get("phones", [])
                     found_linkedin = contacts_extracted.get("linkedin_url", None)
+
+                    # Merge authentic on-site contacts discovered by Smart DOM Crawler
+                    if cached_crawl:
+                        for ce in cached_crawl.get("onsite_emails", []):
+                            if ce not in found_emails:
+                                found_emails.append(ce)
+                        for cp in cached_crawl.get("onsite_phones", []):
+                            if cp not in found_phones:
+                                found_phones.append(cp)
 
                     primary_email = found_emails[0] if found_emails else None
                     primary_phone = found_phones[0] if found_phones else None
@@ -2086,6 +2098,15 @@ async def stream_discovery(
                     # Advanced Contact Intelligence (Web Footprint Dork + Decision Makers + Zero-Send MX/SMTP Validation)
                     decision_makers = []
                     footprint_emails = []
+
+                    # Seed with authentic on-site decision-makers from Smart DOM Crawler
+                    if cached_crawl and cached_crawl.get("onsite_decision_makers"):
+                        decision_makers = list(cached_crawl["onsite_decision_makers"])
+                        for dm in decision_makers:
+                            if dm.get("email"):
+                                primary_email = dm["email"]
+                                break
+
                     if domain and not is_clients_mode:
                         try:
                             from contact_enricher_pro import enrich_company_contacts_advanced
@@ -2099,7 +2120,14 @@ async def stream_discovery(
                                 ),
                                 timeout=15.0
                             )
-                            decision_makers = pro_intel.get("decision_makers", [])
+                            enriched_dms = pro_intel.get("decision_makers", [])
+                            # Merge decision makers without duplicates
+                            seen_names = {dm.get("name", "").lower() for dm in decision_makers if dm.get("name")}
+                            for edm in enriched_dms:
+                                if edm.get("name") and edm["name"].lower() not in seen_names:
+                                    decision_makers.append(edm)
+                                    seen_names.add(edm["name"].lower())
+
                             footprint_emails = pro_intel.get("footprint_emails", [])
                             if pro_intel.get("all_emails"):
                                 found_emails = pro_intel["all_emails"]

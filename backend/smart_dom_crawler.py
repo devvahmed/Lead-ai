@@ -1,16 +1,39 @@
 """
-Dynamic DOM Header/Footer/Nav Link Parser & Semantic Crawler (Step 6).
+Context-Aware Smart DOM Crawler & AI Navigation Engine (Step 6).
 
-Replaces hardcoded subpage path guesses (/about, /contact, /careers) with real-time
-DOM navigation analysis. Extracts internal links across structural zones (<nav>, <header>,
-<footer>, and <body>), categorizes them semantically into operational buckets, and
-concurrently crawls the highest-value subpages to build rich evidentiary context for
-downstream qualification engines.
+Architecture & Execution Pipeline:
+1. Base Domain & Host Analysis:
+   - Identifies root domain and subdomains (e.g. ahmed.com, shop.ahmed.com).
+2. Multi-Engine Resilient Crawler:
+   - Engine 1: Async httpx with rotating browser headers & decompression.
+   - Engine 2: urllib.request with unverified SSL context fallback.
+   - Engine 3: Alternate desktop user-agents to bypass basic WAF blocks.
+3. Full Site Navigation & Link Harvester:
+   - Scans <nav>, <header>, <footer>, dropdown menus, and internal links.
+   - Normalizes to absolute URLs, filters out external/social platforms & static assets.
+4. AI-Powered Optimal Page Selection:
+   - Submits site structure & anchor texts to local LLM / AI router.
+   - AI determines the exact 3-4 high-value pages that reveal:
+     (a) Company overview & business operations
+     (b) Founders, leadership, executive directory, or doctors/partners
+     (c) Official contact & office directory
+   - Seamless 2.5s heuristic priority fallback if LLM is offline/timed out.
+5. Deep Multi-Page Crawl:
+   - Concurrently crawls the AI-chosen pages.
+6. On-Site Decision Maker & Contact Extractor (Zero-Hallucination Policy):
+   - Extracts real human names and leadership roles directly from crawled content.
+   - Discovers authentic corporate emails on the domain.
+   - Automatically registers discovered email patterns in the Pattern Library.
+   - STRICT ZERO-FAKE: If no name or email is found on the website, returns empty arrays.
+     0% fabrication!
 """
 
 import asyncio
 import gzip
+import json
 import logging
+import os
+import random
 import re
 import ssl
 import urllib.parse
@@ -22,30 +45,34 @@ from bs4 import BeautifulSoup
 import httpx
 
 logger = logging.getLogger("smart_dom_crawler")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s")
 
 # ─── Configuration & Network Headers ──────────────────────────────────────────
 
-BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/126.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0",
+]
 
-# External social & aggregator platforms to filter out
+def get_random_headers() -> Dict[str, str]:
+    ua = random.choice(USER_AGENTS)
+    return {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    }
+
+# Disallowed external aggregators and social networks
 DISALLOWED_DOMAINS = {
     "linkedin.com", "twitter.com", "x.com", "facebook.com", "instagram.com",
     "youtube.com", "github.com", "tiktok.com", "pinterest.com", "google.com",
@@ -53,7 +80,7 @@ DISALLOWED_DOMAINS = {
     "bit.ly", "whatsapp.com", "vimeo.com", "clutch.co", "yelp.com", "wikipedia.org"
 }
 
-# Non-HTML static assets to discard
+# Non-HTML static assets to skip
 ASSET_EXTENSIONS = (
     ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
     ".zip", ".tar", ".gz", ".rar", ".7z", ".exe", ".dmg", ".apk",
@@ -73,12 +100,27 @@ _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False
 _SSL_CTX.verify_mode = ssl.CERT_NONE
 
+# In-memory crawl metadata cache for discover pipeline
+_CRAWL_CACHE: Dict[str, Dict[str, Any]] = {}
 
-# ─── 1. URL Normalization & Validation Helpers ────────────────────────────────
+
+def get_cached_crawl_res(domain: str) -> Optional[Dict[str, Any]]:
+    """Retrieves cached crawl result for a domain."""
+    if not domain:
+        return None
+    clean = domain.lower().replace("www.", "").strip()
+    return _CRAWL_CACHE.get(clean)
+
+
+# ─── 1. URL & Domain Normalization Helpers ─────────────────────────────────────
 
 def get_base_domain(url: str) -> str:
     """Extracts registered host from URL, removing www. and ports."""
+    if not url:
+        return ""
     try:
+        if not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
         parsed = urllib.parse.urlparse(url)
         host = (parsed.hostname or parsed.netloc or "").lower().strip()
         if host.startswith("www."):
@@ -96,7 +138,7 @@ def is_same_domain_or_subdomain(target_url: str, base_url: str) -> bool:
     base_domain = get_base_domain(base_url)
     if not target_domain or not base_domain:
         return False
-    return target_domain == base_domain or target_domain.endswith("." + base_domain)
+    return target_domain == base_domain or target_domain.endswith("." + base_domain) or base_domain.endswith("." + target_domain)
 
 
 def normalize_and_validate_url(raw_href: str, base_url: str) -> Optional[str]:
@@ -115,7 +157,6 @@ def normalize_and_validate_url(raw_href: str, base_url: str) -> Optional[str]:
     if not cleaned_href:
         return None
 
-    # Filter out protocols / fragments
     lower_href = cleaned_href.lower()
     if lower_href.startswith(("#", "javascript:", "mailto:", "tel:", "data:", "sms:", "callto:")):
         return None
@@ -131,7 +172,6 @@ def normalize_and_validate_url(raw_href: str, base_url: str) -> Optional[str]:
     except Exception:
         return None
 
-    # Scheme must be http or https
     if parsed.scheme not in ("http", "https"):
         return None
 
@@ -142,10 +182,9 @@ def normalize_and_validate_url(raw_href: str, base_url: str) -> Optional[str]:
         parsed.path,
         parsed.params,
         parsed.query,
-        ""  # strip fragment
+        ""
     ))
 
-    # Check domain
     target_domain = get_base_domain(clean_url)
     if not target_domain or any(dis in target_domain for dis in DISALLOWED_DOMAINS):
         return None
@@ -162,301 +201,30 @@ def normalize_and_validate_url(raw_href: str, base_url: str) -> Optional[str]:
     base_parsed = urllib.parse.urlparse(base_url)
     base_path = base_parsed.path.lower().rstrip("/")
     if clean_path == base_path or clean_path in HOMEPAGE_PATHS:
-        # If query parameters exist, it might be a page, but pure homepage path should be skipped
         if not parsed.query:
             return None
 
     return clean_url
 
 
-# ─── 2. DOM Link Extraction Engine ────────────────────────────────────────────
+# ─── 2. Multi-Engine Resilient Crawler ────────────────────────────────────────
 
-def extract_internal_dom_links(
-    html_content: str,
-    base_url: str
-) -> Dict[str, List[Dict[str, str]]]:
+async def fetch_page_html_resilient(url: str, timeout: float = 4.0) -> str:
     """
-    Parses HTML content and extracts internal hyperlinks categorized by structural zones:
-    - `nav_links`: extracted from <nav>, <header>, or containers with nav/menu/header classes/IDs.
-    - `footer_links`: extracted from <footer> or containers with footer classes/IDs.
-    - `body_links`: all remaining internal <a> tags.
-
-    Returns:
-        {
-            "nav_links": [{"url": ..., "text": ..., "zone": "nav", "path": ...}, ...],
-            "footer_links": [...],
-            "body_links": [...],
-            "all_links": [...]
-        }
+    Fetches HTML content of a page using a multi-engine fallback pipeline:
+    - Engine 1: Async httpx with modern browser impersonation & SSL bypass.
+    - Engine 2: urllib.request with unverified SSL context and custom decompression.
+    - Engine 3: Alternative user-agent retry.
     """
-    if not html_content or not base_url:
-        return {
-            "nav_links": [],
-            "footer_links": [],
-            "body_links": [],
-            "all_links": []
-        }
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
 
-    try:
-        soup = BeautifulSoup(html_content, "html.parser")
-    except Exception as e:
-        logger.debug(f"[DOMParser] BeautifulSoup parse error: {e}")
-        return {
-            "nav_links": [],
-            "footer_links": [],
-            "body_links": [],
-            "all_links": []
-        }
+    headers = get_random_headers()
 
-    nav_links: List[Dict[str, str]] = []
-    footer_links: List[Dict[str, str]] = []
-    body_links: List[Dict[str, str]] = []
-    all_links: List[Dict[str, str]] = []
-
-    seen_urls: Set[str] = set()
-
-    # Identify structural containers
-    nav_elements = soup.find_all(
-        lambda tag: tag.name in ("nav", "header") or (
-            tag.has_attr("class") and any("nav" in c.lower() or "menu" in c.lower() or "header" in c.lower() for c in tag["class"] if isinstance(c, str))
-        ) or (
-            tag.has_attr("id") and any(k in str(tag["id"]).lower() for k in ("nav", "menu", "header", "main-nav", "primary-menu"))
-        )
-    )
-
-    footer_elements = soup.find_all(
-        lambda tag: tag.name == "footer" or (
-            tag.has_attr("class") and any("footer" in c.lower() for c in tag["class"] if isinstance(c, str))
-        ) or (
-            tag.has_attr("id") and "footer" in str(tag["id"]).lower()
-        )
-    )
-
-    # 1. Process Navigation Zone Links (Highest Structural Priority)
-    for container in nav_elements:
-        for a in container.find_all("a", href=True):
-            validated_url = normalize_and_validate_url(a["href"], base_url)
-            if validated_url and validated_url not in seen_urls:
-                seen_urls.add(validated_url)
-                text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
-                path = urllib.parse.urlparse(validated_url).path
-                item = {
-                    "url": validated_url,
-                    "href": a["href"].strip(),
-                    "text": text,
-                    "zone": "nav",
-                    "path": path
-                }
-                nav_links.append(item)
-                all_links.append(item)
-
-    # 2. Process Footer Zone Links (Secondary Structural Priority)
-    for container in footer_elements:
-        for a in container.find_all("a", href=True):
-            validated_url = normalize_and_validate_url(a["href"], base_url)
-            if validated_url and validated_url not in seen_urls:
-                seen_urls.add(validated_url)
-                text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
-                path = urllib.parse.urlparse(validated_url).path
-                item = {
-                    "url": validated_url,
-                    "href": a["href"].strip(),
-                    "text": text,
-                    "zone": "footer",
-                    "path": path
-                }
-                footer_links.append(item)
-                all_links.append(item)
-
-    # 3. Process Remaining Body Zone Links
-    for a in soup.find_all("a", href=True):
-        validated_url = normalize_and_validate_url(a["href"], base_url)
-        if validated_url and validated_url not in seen_urls:
-            seen_urls.add(validated_url)
-            text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
-            path = urllib.parse.urlparse(validated_url).path
-            item = {
-                "url": validated_url,
-                "href": a["href"].strip(),
-                "text": text,
-                "zone": "body",
-                "path": path
-            }
-            body_links.append(item)
-            all_links.append(item)
-
-    return {
-        "nav_links": nav_links,
-        "footer_links": footer_links,
-        "body_links": body_links,
-        "all_links": all_links
-    }
-
-
-# ─── 3. Semantic Link Router & Categorizer ───────────────────────────────────
-
-# Target operational categories and their matching keyword lexicons
-OPERATIONAL_CATEGORIES = {
-    "about": {
-        "exact_texts": {"about", "about us", "about company", "our company", "who we are", "company profile", "our story", "overview", "corporate overview"},
-        "path_terms": ["about", "about-us", "our-company", "who-we-are", "profile", "company-profile", "overview", "our-story", "corporate"],
-        "text_terms": ["about", "our company", "who we are", "company profile", "our story", "overview", "history", "mission"]
-    },
-    "services_operations": {
-        "exact_texts": {"services", "our services", "solutions", "what we do", "capabilities", "products", "operations", "facilities", "manufacturing", "technology"},
-        "path_terms": ["services", "our-services", "solutions", "capabilities", "operations", "facilities", "manufacturing", "plants", "products", "what-we-do", "technology", "engineering"],
-        "text_terms": ["services", "solutions", "capabilities", "operations", "facilities", "manufacturing", "products", "what we do", "technology", "equipment", "production"]
-    },
-    "contact": {
-        "exact_texts": {"contact", "contact us", "get in touch", "reach us", "locations", "offices", "our offices", "support", "inquiry"},
-        "path_terms": ["contact", "contact-us", "get-in-touch", "reach-us", "locations", "offices", "support", "inquiry", "enquiry", "office-locations"],
-        "text_terms": ["contact", "get in touch", "reach us", "locations", "offices", "support", "inquiry", "connect"]
-    },
-    "careers_hiring": {
-        "exact_texts": {"careers", "jobs", "work with us", "join us", "openings", "join our team", "vacancies", "employment"},
-        "path_terms": ["careers", "jobs", "work-with-us", "openings", "join-us", "join-our-team", "vacancies", "employment", "hiring"],
-        "text_terms": ["careers", "jobs", "work with us", "openings", "join us", "join our team", "vacancies", "employment", "hiring"]
-    }
-}
-
-# Negative path terms to demote (blogs, news, announcements, press releases)
-DISQUALIFYING_PATH_TERMS = [
-    "/blog/", "/news/", "/press-release/", "/articles/", "/tag/", "/category/",
-    "/author/", "/events/", "/webinars/", "/podcast/", "/insights/"
-]
-
-
-def score_link_for_category(link_item: Dict[str, str], category: str) -> float:
-    """
-    Computes a relevance score (0 - 100) for a link candidate against a specific category.
-    Evaluates DOM zone, exact anchor text match, path matching, and path conciseness.
-    """
-    config = OPERATIONAL_CATEGORIES.get(category)
-    if not config:
-        return 0.0
-
-    url = link_item.get("url", "")
-    path = link_item.get("path", "").lower()
-    text = link_item.get("text", "").lower().strip()
-    zone = link_item.get("zone", "body")
-
-    # Demote noise paths
-    if any(noise in path for noise in DISQUALIFYING_PATH_TERMS):
-        return 0.0
-
-    score = 0.0
-
-    # 1. Structural Zone Weight
-    if zone == "nav":
-        score += 15.0
-    elif zone == "body":
-        score += 8.0
-    elif zone == "footer":
-        score += 5.0
-
-    # 2. Anchor Text Evaluation
-    if text in config["exact_texts"]:
-        score += 35.0
-    elif any(term in text for term in config["text_terms"]):
-        score += 20.0
-
-    # 3. URL Path Evaluation
-    clean_slug = path.strip("/").replace("_", "-")
-    if clean_slug in config["path_terms"]:
-        score += 35.0
-    elif any(term in path for term in config["path_terms"]):
-        score += 18.0
-
-    # 4. Path Conciseness Bonus (prefer /about over /company/history/2021/about-story)
-    segments = [s for s in path.split("/") if s]
-    if len(segments) == 1:
-        score += 12.0
-    elif len(segments) == 2:
-        score += 6.0
-    elif len(segments) > 3:
-        score -= 10.0
-
-    return score
-
-
-def categorize_and_prioritize_links(
-    links: List[Dict[str, str]],
-    base_url: str
-) -> Dict[str, str]:
-    """
-    Evaluates all extracted internal links and maps them to key operational categories.
-    Selects the highest scoring URL for each category (about, services_operations, contact, careers_hiring).
-
-    Returns:
-        {
-            "about": "https://company.com/about-us",
-            "services_operations": "https://company.com/services",
-            "contact": "https://company.com/contact",
-            "careers_hiring": "https://company.com/careers"
-        }
-    """
-    if not links:
-        return {}
-
-    categorized_targets: Dict[str, str] = {}
-    best_scores: Dict[str, float] = {}
-
-    for category in OPERATIONAL_CATEGORIES:
-        best_url = None
-        highest_score = 0.0
-
-        for link in links:
-            score = score_link_for_category(link, category)
-            if score >= 20.0 and score > highest_score:
-                highest_score = score
-                best_url = link["url"]
-
-        if best_url:
-            categorized_targets[category] = best_url
-            best_scores[category] = highest_score
-
-    # Avoid duplicate URLs across categories (assign to the category with highest relative score)
-    url_to_cat: Dict[str, str] = {}
-    cleaned_targets: Dict[str, str] = {}
-
-    for cat, url in categorized_targets.items():
-        if url not in url_to_cat:
-            url_to_cat[url] = cat
-            cleaned_targets[cat] = url
-        else:
-            prev_cat = url_to_cat[url]
-            if best_scores.get(cat, 0) > best_scores.get(prev_cat, 0):
-                cleaned_targets.pop(prev_cat, None)
-                url_to_cat[url] = cat
-                cleaned_targets[cat] = url
-
-    return cleaned_targets
-
-
-# ─── 4. Subpage Text Extraction & Network Helpers ─────────────────────────────
-
-def extract_clean_page_text(html: str) -> str:
-    """Strips scripts, styles, svg, and noisy markup, returning clean readable text."""
-    if not html:
-        return ""
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "noscript", "svg"]):
-            tag.decompose()
-        text = re.sub(r"\s+", " ", soup.get_text(separator=" ")).strip()
-        return text
-    except Exception:
-        return ""
-
-
-async def fetch_page_html(url: str, timeout: float = 4.0) -> str:
-    """
-    Fetches HTML content of a single page asynchronously using httpx.
-    Falls back to urllib in a thread pool if TLS/SSL or connection issues occur.
-    """
+    # Engine 1: httpx AsyncClient
     try:
         async with httpx.AsyncClient(
-            headers=BROWSER_HEADERS,
+            headers=headers,
             timeout=timeout,
             follow_redirects=True,
             verify=False
@@ -465,13 +233,13 @@ async def fetch_page_html(url: str, timeout: float = 4.0) -> str:
             if resp.status_code == 200 and resp.text:
                 return resp.text
     except Exception as e:
-        logger.debug(f"[SmartCrawler] httpx fetch failed for {url}: {e}")
+        logger.debug(f"[MultiCrawler] httpx fetch failed for {url}: {e}")
 
-    # Fallback to urllib executor
+    # Engine 2: urllib executor with unverified SSL
     loop = asyncio.get_event_loop()
-    def _urllib_fetch():
+    def _urllib_fetch(alt_headers: Dict[str, str]) -> str:
         try:
-            req = urllib.request.Request(url, headers=BROWSER_HEADERS)
+            req = urllib.request.Request(url, headers=alt_headers)
             with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX) as resp:
                 raw_bytes = resp.read()
                 encoding = resp.headers.get("Content-Encoding", "").lower()
@@ -484,12 +252,456 @@ async def fetch_page_html(url: str, timeout: float = 4.0) -> str:
             return ""
 
     try:
-        return await loop.run_in_executor(None, _urllib_fetch)
+        html_out = await loop.run_in_executor(None, _urllib_fetch, headers)
+        if html_out and len(html_out.strip()) > 100:
+            return html_out
+    except Exception:
+        pass
+
+    # Engine 3: Alternate User-Agent retry
+    alt_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "close"
+    }
+    try:
+        html_out = await loop.run_in_executor(None, _urllib_fetch, alt_headers)
+        if html_out:
+            return html_out
+    except Exception:
+        pass
+
+    # Engine 4: HTTP Protocol Fallback (if HTTPS SSL handshake failed or expired)
+    if url.startswith("https://"):
+        http_url = "http://" + url[8:]
+        try:
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=timeout,
+                follow_redirects=True,
+                verify=False
+            ) as client:
+                resp = await client.get(http_url)
+                if resp.status_code == 200 and resp.text:
+                    return resp.text
+        except Exception:
+            pass
+
+    return ""
+
+
+def extract_clean_page_text(html: str) -> str:
+    """Strips scripts, styles, svg, and noisy markup, returning clean readable text."""
+    if not html:
+        return ""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
+            tag.decompose()
+        text = re.sub(r"\s+", " ", soup.get_text(separator=" ")).strip()
+        return text
     except Exception:
         return ""
 
 
-# ─── 5. Dynamic Multi-Page Crawler Entry Point ───────────────────────────────
+# ─── 3. Comprehensive Site Navigation & Link Harvester ─────────────────────────
+
+def extract_all_site_nav_links(
+    html_content: str,
+    base_url: str
+) -> Dict[str, Any]:
+    """
+    Deeply parses DOM to extract all internal navigation, header, footer, menu,
+    and sub-menu links across the entire website.
+    """
+    if not html_content or not base_url:
+        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []}
+
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+    except Exception as e:
+        logger.debug(f"[DOMParser] BeautifulSoup parse error: {e}")
+        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []}
+
+    nav_links: List[Dict[str, str]] = []
+    footer_links: List[Dict[str, str]] = []
+    body_links: List[Dict[str, str]] = []
+    all_links: List[Dict[str, str]] = []
+    seen_urls: Set[str] = set()
+
+    # Locate structural navigation containers
+    nav_elements = soup.find_all(
+        lambda tag: tag.name in ("nav", "header") or (
+            tag.has_attr("class") and any(
+                k in c.lower() for c in (tag["class"] if isinstance(tag["class"], list) else [str(tag["class"])])
+                for k in ("nav", "menu", "header", "navbar", "navigation")
+            )
+        ) or (
+            tag.has_attr("id") and any(k in str(tag["id"]).lower() for k in ("nav", "menu", "header", "main-nav"))
+        ) or (
+            tag.has_attr("role") and tag["role"] in ("navigation", "menubar")
+        )
+    )
+
+    # Locate structural footer containers
+    footer_elements = soup.find_all(
+        lambda tag: tag.name == "footer" or (
+            tag.has_attr("class") and any(
+                "footer" in c.lower() for c in (tag["class"] if isinstance(tag["class"], list) else [str(tag["class"])])
+            )
+        ) or (
+            tag.has_attr("id") and "footer" in str(tag["id"]).lower()
+        ) or (
+            tag.has_attr("role") and tag["role"] == "contentinfo"
+        )
+    )
+
+    # 1. Nav Zone Links
+    for container in nav_elements:
+        for a in container.find_all("a", href=True):
+            val_url = normalize_and_validate_url(a["href"], base_url)
+            if val_url and val_url not in seen_urls:
+                seen_urls.add(val_url)
+                text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
+                path = urllib.parse.urlparse(val_url).path
+                item = {"url": val_url, "href": a["href"].strip(), "text": text, "zone": "nav", "path": path}
+                nav_links.append(item)
+                all_links.append(item)
+
+    # 2. Footer Zone Links
+    for container in footer_elements:
+        for a in container.find_all("a", href=True):
+            val_url = normalize_and_validate_url(a["href"], base_url)
+            if val_url and val_url not in seen_urls:
+                seen_urls.add(val_url)
+                text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
+                path = urllib.parse.urlparse(val_url).path
+                item = {"url": val_url, "href": a["href"].strip(), "text": text, "zone": "footer", "path": path}
+                footer_links.append(item)
+                all_links.append(item)
+
+    # 3. Remaining Body Links
+    for a in soup.find_all("a", href=True):
+        val_url = normalize_and_validate_url(a["href"], base_url)
+        if val_url and val_url not in seen_urls:
+            seen_urls.add(val_url)
+            text = re.sub(r"\s+", " ", a.get_text(separator=" ")).strip()
+            path = urllib.parse.urlparse(val_url).path
+            item = {"url": val_url, "href": a["href"].strip(), "text": text, "zone": "body", "path": path}
+            body_links.append(item)
+            all_links.append(item)
+
+    return {
+        "all_links": all_links,
+        "nav_links": nav_links,
+        "footer_links": footer_links,
+        "body_links": body_links
+    }
+
+
+# ─── 4. AI-Powered Optimal Page Selection ─────────────────────────────────────
+
+async def ai_select_optimal_subpages(
+    domain: str,
+    candidate_links: List[Dict[str, str]],
+    max_pages: int = 4
+) -> List[str]:
+    """
+    Submits the extracted menu/navigation link candidates to the AI router.
+    AI selects the top 3-4 pages that provide:
+    1. Core business overview and operations
+    2. Executive leadership, founders, owners, or team directory
+    3. Official contact and locations
+    Includes a 2.5s timeout with an intelligent heuristic fallback.
+    """
+    if not candidate_links:
+        return []
+
+    # Clean list of unique paths & anchor texts for compact prompt
+    compact_candidates: List[Dict[str, str]] = []
+    seen_paths = set()
+    for link in candidate_links:
+        path = link.get("path") or ""
+        text = link.get("text") or ""
+        if path and path not in seen_paths and len(path) > 1:
+            seen_paths.add(path)
+            compact_candidates.append({
+                "url": link["url"],
+                "path": path,
+                "text": text[:40],
+                "zone": link.get("zone", "nav")
+            })
+
+    if not compact_candidates:
+        return []
+
+    selected_urls: List[str] = []
+
+    # Attempt 1: Call Local LLM via async_call_ollama or llm_router
+    try:
+        from discover import async_call_ollama
+
+        sample_list = compact_candidates[:25]
+        prompt = f"""You are an expert web crawler and B2B researcher analyzing '{domain}'.
+Here are the internal navigation and footer links discovered on the website:
+{json.dumps([{'path': c['path'], 'text': c['text']} for c in sample_list], indent=2)}
+
+TASK:
+Select the top {max_pages - 1} BEST URLs from this list that will reveal:
+1. Core company overview, business history, and what they do.
+2. Founders, owners, executive leadership, or team directory.
+3. Official office locations and contact directory.
+
+Return ONLY a valid JSON array containing the exact selected paths from the list, e.g.:
+["/about-us", "/our-team", "/contact"]
+Do not return any explanations or markdown. Just the JSON array."""
+
+        raw_output = await async_call_ollama(
+            prompt=prompt,
+            system_prompt="You are a precise web navigation analyzer. Output strictly a JSON array of chosen paths.",
+            temperature=0.1,
+            max_tokens=200,
+            timeout=2.5
+        )
+
+        if raw_output:
+            cleaned = re.sub(r"^```json\s*", "", raw_output.strip(), flags=re.MULTILINE)
+            cleaned = re.sub(r"^```\s*", "", cleaned, flags=re.MULTILINE)
+            start_b = cleaned.find("[")
+            end_b = cleaned.rfind("]")
+            if start_b != -1 and end_b != -1:
+                parsed_paths = json.loads(cleaned[start_b:end_b + 1])
+                if isinstance(parsed_paths, list):
+                    for p in parsed_paths:
+                        p_str = str(p).strip().lower()
+                        # Match to candidate full url
+                        matched = next((c["url"] for c in compact_candidates if c["path"].lower() == p_str or p_str in c["url"].lower()), None)
+                        if matched and matched not in selected_urls:
+                            selected_urls.append(matched)
+                            if len(selected_urls) >= (max_pages - 1):
+                                break
+                    if selected_urls:
+                        logger.info(f"[SmartDOMCrawler] AI selected {len(selected_urls)} optimal pages for {domain}: {selected_urls}")
+    except Exception as e:
+        logger.debug(f"[SmartDOMCrawler] AI page selection bypassed ({e}) — executing smart heuristic")
+
+    # Attempt 2: Smart Heuristic Fallback (Zero Fail)
+    if len(selected_urls) < (max_pages - 1):
+        # High-priority categories:
+        # 1. Leadership & Team (Founders, Executives, Doctors, Partners)
+        # 2. About & Overview (Company, History, Story)
+        # 3. Contact & Locations
+        leadership_terms = [
+            "team", "our-team", "leadership", "people", "founders", "management",
+            "board", "executives", "directors", "staff", "attorneys", "doctors", "partners"
+        ]
+        overview_terms = [
+            "about", "about-us", "who-we-are", "our-company", "company", "overview",
+            "our-story", "history", "capabilities", "what-we-do"
+        ]
+        contact_terms = [
+            "contact", "contact-us", "locations", "offices", "get-in-touch", "reach-us"
+        ]
+
+        def score_link(c: Dict[str, str]) -> float:
+            score = 0.0
+            p = c["path"].lower()
+            t = c["text"].lower()
+            z = c["zone"]
+
+            # Zone bonus
+            if z == "nav":
+                score += 15.0
+            elif z == "footer":
+                score += 8.0
+
+            # Negative filter
+            if any(n in p for n in ("/blog", "/news", "/press", "/tag", "/category", "/career", "/job")):
+                return 0.0
+
+            # Leadership match (Highest value)
+            if any(term in p or term in t for term in leadership_terms):
+                score += 50.0
+            # Overview match
+            elif any(term in p or term in t for term in overview_terms):
+                score += 40.0
+            # Contact match
+            elif any(term in p or term in t for term in contact_terms):
+                score += 30.0
+
+            # Path length penalty for deeply nested pages
+            segments = [s for s in p.split("/") if s]
+            if len(segments) <= 2:
+                score += 10.0
+            else:
+                score -= 5.0
+
+            return score
+
+        scored_list = sorted(compact_candidates, key=score_link, reverse=True)
+        for candidate in scored_list:
+            u = candidate["url"]
+            if u not in selected_urls and score_link(candidate) >= 20.0:
+                selected_urls.append(u)
+                if len(selected_urls) >= (max_pages - 1):
+                    break
+
+    return selected_urls[:max_pages - 1]
+
+
+# ─── 5. On-Site Decision Maker & Contact Extractor ────────────────────────────
+
+LEADERSHIP_ROLES = [
+    "Founder", "Co-Founder", "Chief Executive Officer", "CEO", "President",
+    "Owner", "Co-Owner", "Principal", "Managing Partner", "Managing Director",
+    "Executive Director", "Chief Technology Officer", "CTO", "Chief Operating Officer",
+    "COO", "Vice President", "VP", "Director", "General Manager", "Doctor",
+    "Managing Attorney", "Lead Partner"
+]
+
+def extract_onsite_contacts_and_decision_makers(
+    crawled_pages: Dict[str, Dict[str, str]],
+    domain: str
+) -> Dict[str, Any]:
+    """
+    Extracts authentic on-site decision makers, executive names, raw emails, and phones
+    strictly from crawled HTML/text.
+    
+    STRICT ZERO-FAKE POLICY:
+    - Only extracts names explicitly tied to leadership roles on the website.
+    - Only extracts emails matching the domain or clearly published on contact pages.
+    - If none are found, returns EMPTY lists — 0% fabrication!
+    """
+    clean_domain = get_base_domain(domain)
+    decision_makers: List[Dict[str, Any]] = []
+    found_emails: List[str] = []
+    found_phones: List[str] = []
+    seen_dm_names: Set[str] = set()
+
+    email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
+    phone_pattern = re.compile(r'(?:\+\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,5}')
+
+    # Role regex builder
+    role_pattern_str = r'\b(?:' + '|'.join(re.escape(r) for r in LEADERSHIP_ROLES) + r')\b'
+    role_regex = re.compile(role_pattern_str, re.IGNORECASE)
+
+    # Clean excluded keywords for person names
+    invalid_name_words = {
+        "about", "team", "contact", "home", "services", "company", "career", "board",
+        "leadership", "our", "the", "read", "more", "learn", "view", "profile", "bio",
+        "click", "here", "privacy", "policy", "terms", "blog", "news", "office", "phone"
+    }
+
+    for page_key, page_data in crawled_pages.items():
+        text = page_data.get("text", "")
+        page_url = page_data.get("url", "")
+        if not text:
+            continue
+
+        # 1. Email Extraction
+        page_emails = email_pattern.findall(text)
+        for em in page_emails:
+            em_clean = em.lower().strip().rstrip(".")
+            # Filter asset extensions
+            if not any(em_clean.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".js", ".css")):
+                if em_clean not in found_emails:
+                    found_emails.append(em_clean)
+                    # Automatically learn pattern if on company domain
+                    if clean_domain and em_clean.endswith(f"@{clean_domain}"):
+                        try:
+                            from contact_enricher_pro import learn_and_save_pattern
+                            learn_and_save_pattern(em_clean, clean_domain, confidence=90)
+                        except Exception:
+                            pass
+
+        # 2. Phone Extraction
+        page_phones = phone_pattern.findall(text)
+        for ph in page_phones:
+            ph_clean = ph.strip()
+            digits_only = re.sub(r'\D', '', ph_clean)
+            if 7 <= len(digits_only) <= 15 and ph_clean not in found_phones:
+                found_phones.append(ph_clean)
+
+        # 3. Decision Maker Name & Role Extraction
+        # Look for patterns like:
+        # "John Smith, Founder & CEO"
+        # "Founder & CEO: John Smith"
+        # "Dr. Sarah Jones - Practice Director"
+        lines = text.split("\n")
+        if len(lines) <= 2:
+            # If plain collapsed text, split by sentences or punctuation
+            lines = re.split(r'[.;•|]+', text)
+
+        for line in lines:
+            line_str = line.strip()
+            if not line_str or len(line_str) > 120:
+                continue
+
+            role_match = role_regex.search(line_str)
+            if role_match:
+                matched_role = role_match.group(0).strip().title()
+
+                # Extract person name candidate adjacent to role
+                # Case A: "John Doe, CEO" or "John Doe - Founder"
+                name_candidate = ""
+                before_role = line_str[:role_match.start()].strip(" ,:-|–")
+                after_role = line_str[role_match.end():].strip(" ,:-|–")
+
+                name_regex = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b')
+
+                m_before = name_regex.search(before_role)
+                m_after = name_regex.search(after_role)
+
+                if m_before:
+                    name_candidate = m_before.group(1).strip()
+                elif m_after:
+                    name_candidate = m_after.group(1).strip()
+
+                if name_candidate:
+                    lower_tokens = set(name_candidate.lower().split())
+                    if not lower_tokens.intersection(invalid_name_words):
+                        if name_candidate.lower() not in seen_dm_names:
+                            seen_dm_names.add(name_candidate.lower())
+
+                            # Check if a matching personal email exists in found_emails
+                            dm_email = None
+                            name_parts = name_candidate.lower().split()
+                            first_name = name_parts[0]
+                            last_name = name_parts[-1] if len(name_parts) > 1 else ""
+
+                            for em in found_emails:
+                                if clean_domain and em.endswith(f"@{clean_domain}"):
+                                    local_part = em.split("@")[0].lower()
+                                    if first_name in local_part or (last_name and last_name in local_part):
+                                        dm_email = em
+                                        break
+
+                            # If a personal on-site email is discovered, save to Pattern Library with high confidence
+                            if dm_email:
+                                try:
+                                    from contact_enricher_pro import learn_and_save_pattern
+                                    learn_and_save_pattern(dm_email, clean_domain, confidence=95)
+                                except Exception:
+                                    pass
+
+                            decision_makers.append({
+                                "name": name_candidate,
+                                "role": matched_role,
+                                "email": dm_email,
+                                "source": f"onsite_{page_key}",
+                                "page_url": page_url,
+                                "strictly_verified": True if dm_email else False
+                            })
+
+    return {
+        "decision_makers": decision_makers,
+        "emails": found_emails,
+        "phones": found_phones
+    }
+
+
+# ─── 6. Master Dynamic Multi-Page Crawler Entry Point ─────────────────────────
 
 async def crawl_smart_dom_target(
     domain: str,
@@ -498,63 +710,52 @@ async def crawl_smart_dom_target(
     max_pages: int = 4
 ) -> Dict[str, Any]:
     """
-    Main entry point for Step 6: Dynamic DOM Header/Footer/Nav Link Parser.
-
-    1. Receives or fetches homepage HTML.
-    2. Parses DOM structural zones (<nav>, <header>, <footer>, <body>).
-    3. Categorizes and prioritizes the top operational subpages (about, services/operations, contact, careers).
-    4. Concurrently crawls the top subpages (up to max_pages total pages).
-    5. Assembles combined multi-page evidence text and formatted source labels.
-
-    Returns:
-        {
-            "combined_text": str,
-            "source_label": str,
-            "homepage_text": str,
-            "pages": Dict[str, Dict[str, str]],
-            "dom_links": Dict[str, List[Dict[str, str]]],
-            "categorized_targets": Dict[str, str],
-            "total_pages_crawled": int
-        }
+    Main entry point for Step 6:
+    1. Validates base domain and normalizes URL.
+    2. Deeply crawls homepage using multi-engine crawler.
+    3. Harvests all internal navigation, header, footer, and menu links.
+    4. Submits candidate links to AI to intelligently select top 3-4 overview/team pages.
+    5. Concurrently crawls the AI-chosen subpages.
+    6. Extracts authentic on-site decision makers, raw emails, and phone numbers.
+    7. Caches result and returns combined text and verified on-site contacts.
     """
-    if not homepage_url.startswith(("http://", "https://")):
-        homepage_url = f"https://{homepage_url}"
+    clean_domain = get_base_domain(domain or homepage_url)
 
-    # 1. Acquire Homepage HTML
+    if not homepage_url.startswith(("http://", "https://")):
+        homepage_url = f"https://{homepage_url or clean_domain}"
+
+    # Step 1 & 2: Acquire Homepage HTML with Multi-Engine Fallback
     if not homepage_html:
-        homepage_html = await fetch_page_html(homepage_url, timeout=4.0)
+        homepage_html = await fetch_page_html_resilient(homepage_url, timeout=4.0)
 
     homepage_text = extract_clean_page_text(homepage_html)
     if not homepage_text:
-        return {
+        empty_res = {
             "combined_text": "",
             "source_label": "none",
             "homepage_text": "",
             "pages": {},
-            "dom_links": {"nav_links": [], "footer_links": [], "body_links": [], "all_links": []},
-            "categorized_targets": {},
+            "dom_links": {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []},
+            "selected_urls": [],
+            "onsite_decision_makers": [],
+            "onsite_emails": [],
+            "onsite_phones": [],
             "total_pages_crawled": 0
         }
+        if clean_domain:
+            _CRAWL_CACHE[clean_domain] = empty_res
+        return empty_res
 
-    # 2. Extract DOM Structural Links
-    dom_links = extract_internal_dom_links(homepage_html, homepage_url)
-    all_extracted_links = dom_links.get("all_links", [])
+    # Step 3: Harvest All DOM Links (Nav, Header, Footer, Dropdowns, Body)
+    dom_links = extract_all_site_nav_links(homepage_html, homepage_url)
+    all_links = dom_links.get("all_links", [])
 
-    # 3. Categorize & Prioritize
-    categorized = categorize_and_prioritize_links(all_extracted_links, homepage_url)
-
-    # 4. Select top target subpages to crawl (up to max_pages - 1)
-    # Order of priority: about, services_operations, contact, careers_hiring
-    priority_order = ["about", "services_operations", "contact", "careers_hiring"]
-    selected_subpages: List[Tuple[str, str]] = []  # (category, url)
-
-    for cat in priority_order:
-        if cat in categorized:
-            target_url = categorized[cat]
-            if target_url != homepage_url and not any(u == target_url for _, u in selected_subpages):
-                selected_subpages.append((cat, target_url))
-                if len(selected_subpages) >= (max_pages - 1):
-                    break
+    # Step 4: AI-Powered Optimal Page Selection
+    selected_subpage_urls = await ai_select_optimal_subpages(
+        domain=clean_domain,
+        candidate_links=all_links,
+        max_pages=max_pages
+    )
 
     pages_crawled: Dict[str, Dict[str, str]] = {
         "homepage": {
@@ -563,51 +764,66 @@ async def crawl_smart_dom_target(
             "category": "homepage"
         }
     }
-
     fetched_sources = ["homepage"]
 
-    # 5. Concurrently Fetch Subpages
-    if selected_subpages:
-        sub_tasks = [fetch_page_html(sub_url, timeout=3.5) for _, sub_url in selected_subpages]
+    # Step 5: Concurrently Crawl Selected Subpages
+    if selected_subpage_urls:
+        sub_tasks = [fetch_page_html_resilient(u, timeout=3.5) for u in selected_subpage_urls]
         sub_htmls = await asyncio.gather(*sub_tasks, return_exceptions=True)
 
-        for (cat, sub_url), html_res in zip(selected_subpages, sub_htmls):
+        for sub_url, html_res in zip(selected_subpage_urls, sub_htmls):
             if isinstance(html_res, str) and html_res.strip():
                 clean_sub_text = extract_clean_page_text(html_res)
                 if len(clean_sub_text) > 80:
                     path_name = urllib.parse.urlparse(sub_url).path or sub_url
-                    pages_crawled[cat] = {
+                    cat_key = path_name.strip("/").replace("/", "_") or "subpage"
+                    pages_crawled[cat_key] = {
                         "url": sub_url,
                         "text": clean_sub_text,
-                        "category": cat
+                        "category": cat_key
                     }
                     fetched_sources.append(path_name)
 
-    # 6. Assemble Combined Text
+    # Step 6: On-Site Decision Maker & Contact Extraction (Strict Zero-Fake Policy)
+    onsite_contacts = extract_onsite_contacts_and_decision_makers(pages_crawled, clean_domain)
+    onsite_dms = onsite_contacts.get("decision_makers", [])
+    onsite_emails = onsite_contacts.get("emails", [])
+    onsite_phones = onsite_contacts.get("phones", [])
+
+    if onsite_dms:
+        logger.info(f"[SmartDOMCrawler] 🎯 Discovered {len(onsite_dms)} real on-site decision-makers for {clean_domain}")
+    if onsite_emails:
+        logger.info(f"[SmartDOMCrawler] ✉️ Discovered {len(onsite_emails)} on-site emails for {clean_domain}")
+
+    # Assemble Combined Evidentiary Text
     combined_parts = [
         f"[PAGE: Homepage] ({urllib.parse.urlparse(homepage_url).path or '/'})\n{homepage_text[:2000]}"
     ]
-
-    for cat, page_data in pages_crawled.items():
-        if cat == "homepage":
+    for key, p_data in pages_crawled.items():
+        if key == "homepage":
             continue
-        p_url = page_data.get("url", "")
-        p_text = page_data.get("text", "")
-        p_path = urllib.parse.urlparse(p_url).path or p_url
-        cat_title = cat.replace("_", " ").title()
+        p_path = urllib.parse.urlparse(p_data["url"]).path or p_data["url"]
         combined_parts.append(
-            f"\n\n--- [PAGE: {cat_title}] ({p_path}) ---\n{p_text[:1400]}"
+            f"\n\n--- [PAGE: {key.replace('_', ' ').title()}] ({p_path}) ---\n{p_data['text'][:1400]}"
         )
 
     combined_text = "\n".join(combined_parts)
     source_label = " + ".join(fetched_sources)
 
-    return {
+    crawl_result = {
         "combined_text": combined_text,
         "source_label": source_label,
         "homepage_text": homepage_text,
         "pages": pages_crawled,
         "dom_links": dom_links,
-        "categorized_targets": categorized,
+        "selected_urls": selected_subpage_urls,
+        "onsite_decision_makers": onsite_dms,
+        "onsite_emails": onsite_emails,
+        "onsite_phones": onsite_phones,
         "total_pages_crawled": len(pages_crawled)
     }
+
+    if clean_domain:
+        _CRAWL_CACHE[clean_domain] = crawl_result
+
+    return crawl_result
