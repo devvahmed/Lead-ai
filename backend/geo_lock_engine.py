@@ -251,6 +251,24 @@ COUNTRY_GEO_MAP: Dict[str, Dict[str, Any]] = {
         ],
         "cities": ["Kuala Lumpur", "George Town", "Penang", "Johor Bahru", "Ipoh", "Shah Alam", "Petaling Jaya", "Subang Jaya"],
         "aliases": ["malaysia", "my", "mys"]
+    },
+    "china": {
+        "canonical_name": "China",
+        "iso_code": "CN",
+        "tlds": [".cn", ".com.cn", ".net.cn", ".org.cn"],
+        "phone_prefixes": ["+86", "0086"],
+        "phone_regexes": [
+            r"\+86[\s\-.]?\d{2,3}[\s\-.]?\d{7,8}",
+            r"\b0086[\s\-.]?\d{2,3}[\s\-.]?\d{7,8}\b",
+            r"\b1[3-9]\d{9}\b",
+            r"\b0\d{2,3}[\s\-.]?\d{7,8}\b",
+        ],
+        "cities": [
+            "Shanghai", "Beijing", "Shenzhen", "Guangzhou", "Dongguan", "Hangzhou",
+            "Chengdu", "Wuhan", "Tianjin", "Ningbo", "Qingdao", "Xiamen", "Foshan",
+            "Suzhou", "Nanjing", "Chongqing", "Wuxi", "Zhengzhou", "Changsha", "Hefei"
+        ],
+        "aliases": ["china", "cn", "prc", "people's republic of china", "chinese"]
     }
 }
 
@@ -289,6 +307,12 @@ ALL_CCTLDS_MAP: Dict[str, str] = {
     ".com.my": "malaysia",
     ".jp": "japan",
     ".cn": "china",
+    ".com.cn": "china",
+    ".net.cn": "china",
+    ".org.cn": "china",
+    ".cy": "cyprus",
+    ".com.cy": "cyprus",
+    ".me": "montenegro",
     ".ru": "russia",
     ".br": "brazil",
     ".com.br": "brazil",

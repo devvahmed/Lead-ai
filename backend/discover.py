@@ -1312,36 +1312,39 @@ def generate_industry_search_queries(
     # Normalize industry naming
     ind_lower = clean_industry.lower()
 
-    # Determine industry archetype
-    is_ecommerce = any(w in ind_lower for w in [
-        "ecommerce", "e-commerce", "e commerce", "retail", "shopping", "d2c", "fashion", "clothing",
+    # Determine industry archetype using strict word boundaries to prevent substring collisions (e.g. 'housing' matching 'warehousing')
+    def has_any_word(pattern_list: List[str]) -> bool:
+        return any(re.search(r'\b' + re.escape(w) + r'\b', ind_lower) for w in pattern_list)
+
+    is_ecommerce = has_any_word([
+        "ecommerce", "e-commerce", "retail", "shopping", "d2c", "fashion", "clothing",
         "apparel", "shoes", "footwear", "cosmetics", "skincare", "consumer goods", "store", "brands"
     ])
-    is_healthcare = any(w in ind_lower for w in [
-        "health", "medical", "dental", "dentist", "doctor", "hospital", "clinic", "pharma", "wellness", "care"
+    is_healthcare = has_any_word([
+        "health", "healthcare", "medical", "dental", "dentist", "doctor", "hospital", "clinic", "pharma", "wellness", "care"
     ])
-    is_real_estate = any(w in ind_lower for w in [
+    is_logistics = has_any_word([
+        "logistic", "logistics", "freight", "trucking", "shipping", "warehouse", "warehousing", "3pl", "supply chain", "cargo"
+    ])
+    is_real_estate = has_any_word([
         "real estate", "property", "realtor", "housing", "brokerage", "leasing", "developer"
-    ])
-    is_hospitality = any(w in ind_lower for w in [
+    ]) and not is_logistics
+    is_hospitality = has_any_word([
         "restaurant", "hotel", "cafe", "resort", "hospitality", "travel", "tourism", "dining", "catering"
     ])
-    is_education = any(w in ind_lower for w in [
+    is_education = has_any_word([
         "education", "university", "college", "school", "academy", "edtech", "training institute"
     ])
-    is_automotive = any(w in ind_lower for w in [
+    is_automotive = has_any_word([
         "automotive", "auto", "car dealership", "dealership", "vehicle", "mechanic"
     ])
-    is_logistics = any(w in ind_lower for w in [
-        "logistic", "freight", "trucking", "shipping", "warehouse", "3pl", "supply chain", "cargo"
-    ])
-    is_legal_finance = any(w in ind_lower for w in [
+    is_legal_finance = has_any_word([
         "legal", "law firm", "attorney", "lawyer", "accounting", "cpa", "tax", "wealth management", "financial advisory"
     ])
-    is_explicit_agency = any(w in ind_lower for w in [
+    is_explicit_agency = has_any_word([
         "marketing agency", "creative agency", "digital agency", "ad agency", "seo agency", "pr agency"
     ])
-    is_manufacturing_industrial = any(w in ind_lower for w in [
+    is_manufacturing_industrial = has_any_word([
         "processing", "packaging", "manufacturing", "industrial", "machinery",
         "factory", "production", "plant", "contract pack", "oem", "automation"
     ])
