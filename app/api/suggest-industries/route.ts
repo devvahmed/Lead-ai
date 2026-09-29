@@ -120,13 +120,24 @@ const KEYWORD_INDUSTRY_MAP: Record<string, IndustryItem[]> = {
     { industry: 'Hotels & Vacation Resorts', reason: 'Direct organic bookings without paying high commissions to Booking.com/Expedia.', score: 8 },
   ],
   'lead generation': [
+    { industry: 'B2B SaaS & Tech Startups', reason: 'High LTV accounts needing automated outbound pipelines to book demos with enterprise buyers.', score: 10 },
     { industry: 'Commercial Real Estate Brokerages', reason: 'Outbound acquisition of corporate tenants and industrial property investors.', score: 10 },
+    { industry: 'Commercial Insurance Brokerages', reason: 'High-ticket policy sales requiring continuous outreach to corporate risk officers.', score: 10 },
     { industry: 'IT Support & Managed Service Providers (MSPs)', reason: 'Reaching small business owners needing network security and cloud backups.', score: 10 },
-    { industry: 'Commercial Roofing & General Contractors', reason: 'Connecting with commercial property managers and building owners for roof replacements.', score: 10 },
-    { industry: 'Accounting & Outsourced CFO Firms', reason: 'Prospecting fast-growing startups and established SMB owners for advisory services.', score: 9 },
+    { industry: 'Commercial Roofing & General Contractors', reason: 'Connecting with commercial property managers and building owners for roof replacements.', score: 9 },
     { industry: 'Staffing & Headhunting Agencies', reason: 'Finding hiring managers and HR directors with open technical or executive positions.', score: 9 },
-    { industry: 'Wholesale & B2B Equipment Suppliers', reason: 'B2B outreach to retail stores, contractors, and regional distributors.', score: 8 },
+    { industry: 'Accounting & Outsourced CFO Firms', reason: 'Prospecting fast-growing startups and established SMB owners for advisory services.', score: 9 },
     { industry: 'Solar Commercial Installers', reason: 'Targeting warehouse and factory owners with large roof spaces for commercial solar.', score: 8 },
+  ],
+  'lead generation automation': [
+    { industry: 'B2B SaaS & Tech Companies', reason: 'High-value customer acquisition needing automated outreach to scale demo bookings.', score: 10 },
+    { industry: 'Commercial Insurance Agencies', reason: 'Targeting mid-sized business executives for corporate liability and commercial property policies.', score: 10 },
+    { industry: 'Staffing & Executive Search Firms', reason: 'Automated outreach to VP of HR and Talent Acquisition heads with active hiring budgets.', score: 10 },
+    { industry: 'Commercial Real Estate Brokerages', reason: 'Reaching property investors and corporate tenants looking for commercial lease space.', score: 10 },
+    { industry: 'IT Support & Managed Service Providers (MSPs)', reason: 'Outbound prospecting to SMB business owners needing cloud security & tech support.', score: 9 },
+    { industry: 'Corporate Law & IP Patent Firms', reason: 'Connecting with corporate legal departments and growing founders needing retainer contracts.', score: 9 },
+    { industry: 'Solar EPC & Commercial Renewable Contractors', reason: 'Targeting commercial building owners for rooftop solar installations and energy audits.', score: 9 },
+    { industry: 'Wholesale & Industrial Equipment Distributors', reason: 'Outbound B2B lead generation to retail chains and regional contractor accounts.', score: 8 },
   ],
 
   // ── E-Commerce & Retail ──
@@ -262,8 +273,17 @@ const KEYWORD_ALIASES: Record<string, string[]> = {
   'apps': ['mobile app'], 'app development': ['mobile app', 'software'],
   'ios': ['mobile app'], 'android': ['mobile app'], 'flutter': ['mobile app'],
   'marketing': ['digital marketing', 'lead generation'], 'seo': ['seo', 'digital marketing'],
-  'cold outreach': ['lead generation'], 'b2b sales': ['lead generation'],
-  'outbound': ['lead generation'], 'social media': ['digital marketing'],
+  'lead gen': ['lead generation', 'lead generation automation'],
+  'lead generation': ['lead generation', 'lead generation automation'],
+  'lead generation automation': ['lead generation automation'],
+  'sales automation': ['lead generation automation', 'automation'],
+  'cold outreach': ['lead generation', 'lead generation automation'],
+  'cold email': ['lead generation automation', 'lead generation'],
+  'b2b sales': ['lead generation', 'lead generation automation'],
+  'outbound': ['lead generation', 'lead generation automation'],
+  'outbound sales': ['lead generation automation'],
+  'prospecting': ['lead generation', 'lead generation automation'],
+  'social media': ['digital marketing'],
   'ppc': ['digital marketing'], 'google ads': ['digital marketing'],
   'facebook ads': ['digital marketing'], 'ads': ['digital marketing'],
   'ecommerce': ['ecommerce', 'shopify'], 'e-commerce': ['ecommerce', 'shopify'],
@@ -287,6 +307,25 @@ const KEYWORD_ALIASES: Record<string, string[]> = {
   'devops': ['cloud', 'software'], 'infrastructure': ['cloud'],
 };
 
+// ─── Query Normalization with Typo Correction ────────────────────────────────
+function normalizeQuery(input: string): string {
+  let q = (input || '').toLowerCase().trim();
+  // Typo corrections
+  q = q.replace(/\bautomtion\b/g, 'automation');
+  q = q.replace(/\bautomaion\b/g, 'automation');
+  q = q.replace(/\bautometion\b/g, 'automation');
+  q = q.replace(/\bsofware\b/g, 'software');
+  q = q.replace(/\bsoftwere\b/g, 'software');
+  q = q.replace(/\bdevlopment\b/g, 'development');
+  q = q.replace(/\bmarkting\b/g, 'marketing');
+  q = q.replace(/\bmarketting\b/g, 'marketing');
+  q = q.replace(/\bleadgen\b/g, 'lead generation');
+  q = q.replace(/\brealstate\b/g, 'real estate');
+  q = q.replace(/\becom\b/g, 'ecommerce');
+  q = q.replace(/\becomm\b/g, 'ecommerce');
+  return q;
+}
+
 // ─── Helper: Resilient Fisher-Yates Shuffle ──────────────────────────────────
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
@@ -303,7 +342,7 @@ function findInstantSuggestions(
   excludeNames: string[] = [],
   limit: number = 8
 ): Array<{ industry: string; reason: string }> {
-  const q = (query || '').toLowerCase().trim();
+  const q = normalizeQuery(query);
   const excludeSet = new Set(excludeNames.map((e) => e.toLowerCase().trim()));
 
   const matchedCandidates: IndustryItem[] = [];
@@ -361,14 +400,18 @@ function findInstantSuggestions(
     }
   }
 
-  // Always supplement with universal lead-rich pool to ensure variety and prevent exhausting list
-  const shuffledUniversal = shuffleArray(UNIVERSAL_LEAD_RICH_INDUSTRIES);
-  for (const item of shuffledUniversal) {
-    addIfFresh(item);
+  // Only supplement from universal lead-rich pool if matched candidates are fewer than limit
+  if (matchedCandidates.length < limit) {
+    const shuffledUniversal = shuffleArray(UNIVERSAL_LEAD_RICH_INDUSTRIES);
+    for (const item of shuffledUniversal) {
+      addIfFresh(item);
+      if (matchedCandidates.length >= limit) break;
+    }
   }
 
   // If user has excluded too many and we still need items, relax exclude on fallback items
   if (matchedCandidates.length < limit) {
+    const shuffledUniversal = shuffleArray(UNIVERSAL_LEAD_RICH_INDUSTRIES);
     for (const item of shuffledUniversal) {
       const nameLower = item.industry.toLowerCase().trim();
       if (!addedNames.has(nameLower)) {

@@ -337,6 +337,29 @@ ALL_CCTLDS_MAP: Dict[str, str] = {
     ".ie": "ireland",
     ".be": "belgium",
     ".at": "austria",
+    ".rs": "serbia",
+    ".am": "armenia",
+    ".ge": "georgia",
+    ".az": "azerbaijan",
+    ".kz": "kazakhstan",
+    ".ua": "ukraine",
+    ".by": "belarus",
+    ".ro": "romania",
+    ".bg": "bulgaria",
+    ".gr": "greece",
+    ".cz": "czech republic",
+    ".sk": "slovakia",
+    ".hu": "hungary",
+    ".hr": "croatia",
+    ".bd": "bangladesh",
+    ".lk": "sri lanka",
+    ".np": "nepal",
+    ".eg": "egypt",
+    ".ng": "nigeria",
+    ".ke": "kenya",
+    ".ar": "argentina",
+    ".cl": "chile",
+    ".co": "colombia",
 }
 
 
@@ -577,6 +600,28 @@ Respond ONLY in valid JSON. No markdown backticks:
             "detected_country": country_name,
             "confidence": 75,
             "reason": f"Heuristic geo-fallback confirmed local presence ({country_name})"
+        }
+
+    # Check for explicit conflicting foreign location signals in text
+    FOREIGN_LOC_SIGNALS = [
+        "pakistan", "karachi", "lahore", "islamabad", "rawalpindi",
+        "armenia", "yerevan", "serbia", "belgrade", "india", "mumbai", "delhi", "bangalore",
+        "nigeria", "lagos", "kenya", "nairobi", "egypt", "cairo",
+        "philippines", "manila", "vietnam", "hanoi", "ho chi minh",
+        "russia", "moscow", "ukraine", "kyiv", "brazil", "sao paulo",
+        "mexico", "mexico city", "indonesia", "jakarta", "turkey", "istanbul"
+    ]
+    target_tokens = set(a.lower() for a in aliases + cities)
+    conflicting_locs = [
+        loc for loc in FOREIGN_LOC_SIGNALS
+        if loc not in target_tokens and re.search(r'\b' + re.escape(loc) + r'\b', text_lower)
+    ]
+    if conflicting_locs:
+        return {
+            "is_local_entity": False,
+            "detected_country": conflicting_locs[0].title(),
+            "confidence": 85,
+            "reason": f"Disqualified: Explicit foreign location ('{conflicting_locs[0].title()}') detected for target {country_name}"
         }
 
     # If domain has no foreign ccTLD conflict and no conflicting foreign signals, allow plausible regional businesses

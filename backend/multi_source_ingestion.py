@@ -63,6 +63,11 @@ GENERIC_PLATFORMS: Set[str] = {
     "dictionary.com", "britannica.com", "quora.com", "openai.com", "chatgpt.com",
     "bestbuy.com", "forbes.com", "microsoft.com", "google.com",
     "deepai.org", "perplexity.ai", "poki.com", "crazygames.com", "y8.com",
+    "garena.com", "apkpure.com", "apkmirror.com", "gamenora.com",
+    "playminigames.net", "qoo-app.com", "kizi.com", "uptodown.com",
+    "aptoide.com", "moddroid.com", "happymod.com", "softonic.com",
+    "now.gg", "itch.io", "roblox.com", "steampowered.com", "epicgames.com",
+    "ign.com", "gamespot.com", "apk-dl.com", "apksum.com", "gameforge.com",
     "zhihu.com", "baidu.com", "stackoverflow.com", "imdb.com", "themoviedb.org",
     "rottentomatoes.com", "kinorium.com", "aceshowbiz.com", "moviefone.com",
     "maps.google.com"
@@ -462,28 +467,12 @@ async def fetch_searxng_async(
                 logger.warning(f"[SearXNG Worker] Error querying {base_url}: {e}")
                 continue
 
-        # ── Multi-Engine Real Web Search Aggregator (Bing + Yahoo + Google + DDG) ──
-        # ── Multi-Engine Real Web Search Aggregator (Bing + DuckDuckGo Lite + Yahoo + Google) ──
+        # ── Multi-Engine Real Web Search Aggregator (Bing Live + Yahoo + DuckDuckGo Lite) ──
         if not candidates:
             seen_domains = set()
 
-            # 1. Engine 1: DuckDuckGo Robust Zero-Cost Fallback (DDGS library + Lite endpoint)
-            try:
-                logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Fallback for query='{query}' (page={page})")
-                ddg_leads = await fetch_duckduckgo_async(query=query, page=page, client=client)
-                if ddg_leads:
-                    for d_cand in ddg_leads:
-                        d = d_cand.raw_domain
-                        if d and d not in seen_domains:
-                            seen_domains.add(d)
-                            d_cand.source = "searxng"
-                            candidates.append(d_cand)
-                    logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo yielded {len(candidates)} corporate candidates")
-            except Exception as ddg_err:
-                logger.debug(f"[Multi-Engine Search] DuckDuckGo fallback error: {ddg_err}")
-
-            # 2. Engine 2: Bing Live Search (Optional, gated by USE_BING_FALLBACK)
-            use_bing = os.getenv("USE_BING_FALLBACK", "false").lower() in ("true", "1")
+            # 1. Engine 1: Bing Live Search (Free & Organic Corporate Web Search)
+            use_bing = os.getenv("USE_BING_FALLBACK", "true").lower() in ("true", "1")
             if use_bing:
                 try:
                     logger.info(f"[Multi-Engine Search] Querying Bing Live Search for query='{query}' (page={page})")
@@ -554,51 +543,68 @@ async def fetch_searxng_async(
                 except Exception as bing_err:
                     logger.debug(f"[Multi-Engine Search] Bing exception: {bing_err}")
 
-            # 2. Engine 2: DuckDuckGo Lite (Fast, robust, always accessible HTML endpoint)
-            try:
-                logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Lite for query='{query}' (page={page})")
-                s_offset = (page - 1) * 30
-                ddg_headers = {
-                    "User-Agent": DEFAULT_USER_AGENT,
-                    "Referer": "https://lite.duckduckgo.com/",
-                    "Content-Type": "application/x-www-form-urlencoded"
-                }
-                ddg_resp = await client.post(
-                    "https://lite.duckduckgo.com/lite/",
-                    data={"q": query, "s": str(s_offset)},
-                    headers=ddg_headers,
-                    timeout=6.0
-                )
-                if ddg_resp.status_code == 200:
-                    soup = BeautifulSoup(ddg_resp.text, "html.parser")
-                    ddg_added = 0
-                    for a in soup.find_all("a", class_="result-link"):
-                        raw_href = a.get("href", "")
-                        if "uddg=" in raw_href:
-                            m = re.search(r'uddg=([^&]+)', raw_href)
-                            if m:
-                                raw_href = urllib.parse.unquote(m.group(1))
-                        if raw_href.startswith("http"):
-                            d = clean_domain_str(raw_href)
-                            if d and d not in GENERIC_PLATFORMS and d not in seen_domains:
+            # 2. Engine 2: DuckDuckGo Fallback (Only if Bing returned fewer than 3 corporate candidates)
+            if len(candidates) < 3:
+                try:
+                    logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Fallback for query='{query}' (page={page})")
+                    ddg_leads = await fetch_duckduckgo_async(query=query, page=page, client=client)
+                    if ddg_leads:
+                        for d_cand in ddg_leads:
+                            d = d_cand.raw_domain
+                            if d and d not in seen_domains and d not in GENERIC_PLATFORMS:
                                 seen_domains.add(d)
-                                t = a.get_text().strip()
-                                t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
-                                candidates.append(RawLeadCandidate(
-                                    source="searxng",
-                                    title=t or d.split('.')[0].capitalize(),
-                                    text_content=f"Commercial operating business site for {d}",
-                                    url=raw_href,
-                                    author_or_company=extract_company_from_title(t) or d.split('.')[0].capitalize(),
-                                    raw_domain=d,
-                                    priority_rank=1,
-                                    raw_metadata={"engine": "duckduckgo_lite"}
-                                ))
-                                ddg_added += 1
-                    if ddg_added:
-                        logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo Lite fetched {ddg_added} additional corporate candidates")
-            except Exception as ddg_err:
-                logger.debug(f"[Multi-Engine Search] DDG Lite exception: {ddg_err}")
+                                d_cand.source = "searxng"
+                                candidates.append(d_cand)
+                        logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo yielded {len(candidates)} corporate candidates")
+                except Exception as ddg_err:
+                    logger.debug(f"[Multi-Engine Search] DuckDuckGo fallback error: {ddg_err}")
+
+            # 3. Engine 3: DuckDuckGo Lite (Fast, robust, always accessible HTML endpoint)
+            if len(candidates) < 3:
+                try:
+                    logger.info(f"[Multi-Engine Search] Querying DuckDuckGo Lite for query='{query}' (page={page})")
+                    s_offset = (page - 1) * 30
+                    ddg_headers = {
+                        "User-Agent": DEFAULT_USER_AGENT,
+                        "Referer": "https://lite.duckduckgo.com/",
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    }
+                    ddg_resp = await client.post(
+                        "https://lite.duckduckgo.com/lite/",
+                        data={"q": query, "s": str(s_offset)},
+                        headers=ddg_headers,
+                        timeout=6.0
+                    )
+                    if ddg_resp.status_code == 200:
+                        soup = BeautifulSoup(ddg_resp.text, "html.parser")
+                        ddg_added = 0
+                        for a in soup.find_all("a", class_="result-link"):
+                            raw_href = a.get("href", "")
+                            if "uddg=" in raw_href:
+                                m = re.search(r'uddg=([^&]+)', raw_href)
+                                if m:
+                                    raw_href = urllib.parse.unquote(m.group(1))
+                            if raw_href.startswith("http"):
+                                d = clean_domain_str(raw_href)
+                                if d and d not in GENERIC_PLATFORMS and d not in seen_domains:
+                                    seen_domains.add(d)
+                                    t = a.get_text().strip()
+                                    t = html.unescape(t).replace('\u200e', '').replace('\u200f', '')
+                                    candidates.append(RawLeadCandidate(
+                                        source="searxng",
+                                        title=t or d.split('.')[0].capitalize(),
+                                        text_content=f"Commercial operating business site for {d}",
+                                        url=raw_href,
+                                        author_or_company=extract_company_from_title(t) or d.split('.')[0].capitalize(),
+                                        raw_domain=d,
+                                        priority_rank=1,
+                                        raw_metadata={"engine": "duckduckgo_lite"}
+                                    ))
+                                    ddg_added += 1
+                        if ddg_added:
+                            logger.info(f"[Multi-Engine Search] ✓ DuckDuckGo Lite fetched {ddg_added} additional corporate candidates")
+                except Exception as ddg_err:
+                    logger.debug(f"[Multi-Engine Search] DDG Lite exception: {ddg_err}")
 
             # 3. Engine 3: Yahoo Live Organic Web Search (Optional via USE_BING_FALLBACK, if candidates < 5)
             if use_bing and len(candidates) < 5:

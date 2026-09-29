@@ -180,6 +180,18 @@ EXCLUDE_DOMAINS = {
     'npmjs.com', 'pypi.org', 'packagist.org', 'rubygems.org',
     'hub.docker.com', 'dockerhub.com',
 
+    # ── Gaming, Mobile APK & ROM Download Aggregators ─────────────────────────
+    'garena.com', 'apkpure.com', 'apkmirror.com', 'gamenora.com',
+    'playminigames.net', 'qoo-app.com', 'poki.com', 'crazygames.com',
+    'y8.com', 'kizi.com', 'uptodown.com', 'aptoide.com', 'moddroid.com',
+    'happymod.com', 'softonic.com', 'now.gg', 'itch.io', 'roblox.com',
+    'steampowered.com', 'epicgames.com', 'ign.com', 'gamespot.com',
+    'gameflare.com', 'kongregate.com', 'armorgames.com', 'apk-dl.com',
+    'apksum.com', 'androeed.ru', 'dlandroid.com', 'revdl.com', 'rexdl.com',
+    'apkdone.com', 'apkaward.com', 'androeed.store', 'modapkdown.com',
+    'apk4all.com', 'an1.com', '5play.ru', 'apkmody.io', 'apkwhale.com',
+    'gameforge.com', 'miniclip.com', 'silvergames.com', 'gamepix.com',
+
     # ── Content / Blog / Publishing Platforms ────────────────────────────────
     'medium.com', 'substack.com', 'ghost.io', 'wordpress.com',
     'blogspot.com', 'blogger.com', 'typepad.com',
@@ -540,8 +552,8 @@ async def search_searxng_or_ddg(query: str, page: int = 1) -> List[dict]:
     if results:
         return results
 
-    # Gate Bing/Yahoo behind USE_BING_FALLBACK (default: False)
-    use_bing = os.getenv("USE_BING_FALLBACK", "false").lower() in ("true", "1")
+    # Gate Bing/Yahoo behind USE_BING_FALLBACK (default: True)
+    use_bing = os.getenv("USE_BING_FALLBACK", "true").lower() in ("true", "1")
     if not use_bing:
         print(f"[Discover Search] Bing/Yahoo fallback skipped (USE_BING_FALLBACK=false), proceeding to DDG.")
     else:
@@ -1209,8 +1221,63 @@ Return ONLY one valid JSON object."""
         domain_tag=domain
     )
 
+    comb_lower = f"{snippet} {scraped_text} {company_name} {domain}".lower()
+
+    # ── Universal Deterministic Entity Guards (Runs before AND after LLM) ──
+    # 1. Gaming / APK / App Stores Disqualification
+    gaming_terms = [
+        "free fire", "battle royale", "mod apk", "apk download", "play online",
+        "online games", "unlimited diamonds", "gameplay", "mini games", "html5 games",
+        "cheats", "hack", "rom download", "apkpure", "garena", "gamenora", "shooter game",
+        "play free games", "download game"
+    ]
+    if any(gt in comb_lower for gt in gaming_terms):
+        print(f"[Lead Eval Guard] 🛑 {domain} identified as Gaming / APK / Entertainment — REJECTED")
+        return {
+            "is_junk": True,
+            "industry_match": False,
+            "lead_type": "",
+            "confidence": 0,
+            "reason": f"Disqualified: Gaming / APK aggregator / entertainment portal ({domain})",
+            "official_company_name": company_name,
+            "detected_country": target_country or "Global",
+            "source": "deterministic-guard"
+        }
+
+    # 2. Industry Relevance Token Expansion
+    ind_lower = target_ind_str.lower()
+    ind_tokens = [w for w in re.findall(r'[a-zA-Z]{3,}', ind_lower) if w not in ('and', 'the', 'for', 'with', 'from', 'services', 'solutions', 'companies', 'providers', 'enterprises')]
+    expanded_kws = list(ind_tokens)
+    if any(k in ind_lower for k in ("real estate", "realtor", "brokerage", "property")):
+        expanded_kws.extend(["real estate", "realtor", "realty", "broker", "brokerage", "property", "properties", "mortgage", "homes", "condos", "leasing", "landlord", "apartments", "housing"])
+    elif any(k in ind_lower for k in ("dental", "dentist", "orthodontic")):
+        expanded_kws.extend(["dental", "dentist", "teeth", "orthodontic", "clinic", "oral", "patient", "hygiene"])
+    elif any(k in ind_lower for k in ("roofing", "hvac", "contractor")):
+        expanded_kws.extend(["roofing", "roof", "hvac", "heating", "cooling", "contractor", "commercial repair", "plumbing"])
+    elif any(k in ind_lower for k in ("accounting", "cpa", "tax")):
+        expanded_kws.extend(["accounting", "cpa", "tax", "bookkeeping", "payroll", "audit", "financial"])
+    elif any(k in ind_lower for k in ("logistics", "freight", "trucking")):
+        expanded_kws.extend(["logistics", "freight", "trucking", "shipping", "transport", "warehouse", "dispatch", "carrier"])
+    elif any(k in ind_lower for k in ("ecommerce", "e-commerce", "d2c", "retail")):
+        expanded_kws.extend(["shop", "store", "products", "cart", "checkout", "apparel", "clothing", "collection", "brand"])
+
+    matched_ind_kws = [kw for kw in expanded_kws if kw in comb_lower]
+
     if not raw_content:
-        print(f"[Ollama Eval Timeout] ⏱️ {domain} — instant fallback to local lead verification")
+        if not matched_ind_kws:
+            print(f"[Ollama Eval Timeout] ⏱️ {domain} — ZERO relevance to '{target_ind_str}' — REJECTED")
+            return {
+                "is_junk": True,
+                "industry_match": False,
+                "lead_type": "",
+                "confidence": 0,
+                "reason": f"Disqualified: Zero relevance to {target_ind_str} found in candidate content ({domain})",
+                "official_company_name": company_name,
+                "detected_country": target_country or "Global",
+                "source": "deterministic-guard"
+            }
+
+        print(f"[Ollama Eval Timeout] ⏱️ {domain} — deterministic relevance verified via keywords: {matched_ind_kws[:3]}")
         return {
             "is_junk": False,
             "industry_match": True,
@@ -1219,7 +1286,7 @@ Return ONLY one valid JSON object."""
             "reason": f"Verified operating business in {target_ind_str} ({domain})",
             "official_company_name": company_name,
             "detected_country": target_country or "Global",
-            "source": "local-fallback"
+            "source": "deterministic-guard"
         }
 
     try:
@@ -1227,6 +1294,15 @@ Return ONLY one valid JSON object."""
         raw_content = re.sub(r'\s*```$', '', raw_content)
         parsed = json.loads(raw_content)
         parsed["source"] = "ollama"
+
+        # Check if Ollama mistakenly approved a candidate with zero industry keywords
+        if parsed.get("industry_match") and not matched_ind_kws:
+            print(f"[Lead Eval Guard] ⚠️ Ollama false positive overridden: {domain} has zero keywords for '{target_ind_str}'")
+            parsed["industry_match"] = False
+            parsed["lead_type"] = ""
+            parsed["confidence"] = 0
+            parsed["reason"] = f"INDUSTRY MISMATCH: Candidate content has zero relevance to {target_ind_str} ({domain})"
+            return parsed
 
         # ── Evidence Post-Processing & Verification ───────────────────────────
         comb_evidence = f"{snippet} {scraped_text} {parsed.get('reason', '')}".lower()

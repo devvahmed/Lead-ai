@@ -63,6 +63,20 @@ PUBLISHING_AND_SOCIAL_PLATFORMS: Set[str] = {
     "techcrunch.com", "theverge.com", "wired.com", "reuters.com", "bloomberg.com"
 }
 
+# ─── Tier 1 Constants: Gaming, APK & App Store Aggregators ───────────────────
+GAMING_AND_APPSTORE_DOMAINS: Set[str] = {
+    "garena.com", "apkpure.com", "apkmirror.com", "gamenora.com",
+    "playminigames.net", "qoo-app.com", "poki.com", "crazygames.com",
+    "y8.com", "kizi.com", "uptodown.com", "aptoide.com", "moddroid.com",
+    "happymod.com", "softonic.com", "now.gg", "itch.io", "roblox.com",
+    "steampowered.com", "epicgames.com", "ign.com", "gamespot.com",
+    "gameflare.com", "kongregate.com", "armorgames.com", "apk-dl.com",
+    "apksum.com", "androeed.ru", "dlandroid.com", "revdl.com", "rexdl.com",
+    "apkdone.com", "apkaward.com", "androeed.store", "modapkdown.com",
+    "apk4all.com", "an1.com", "5play.ru", "apkmody.io", "apkwhale.com",
+    "gameforge.com", "miniclip.com", "silvergames.com", "gamepix.com"
+}
+
 # ─── Tier 1 Constants: Non-Commercial URL Path Regexes ─────────────────────────
 BLOG_AND_ARTICLE_PATH_PATTERNS: List[re.Pattern] = [
     # Article / Blog / News prefixes
@@ -198,6 +212,23 @@ def is_deterministic_junk(
     EVENT_SIGNATURES = ('expo.', '-expo.', 'dairyexpo', 'worlddairy', 'tradeshow', 'trade-show', 'convention-center', 'event-center')
     if any(sig in clean_d for sig in EVENT_SIGNATURES):
         return True, f"Trade show / exhibition / event domain: {clean_d}"
+
+    # 1b. Gaming, APK & App Store Aggregators Blacklist
+    if is_in_domain_set(clean_d, GAMING_AND_APPSTORE_DOMAINS) or any(clean_d.endswith("." + g) or clean_d == g for g in GAMING_AND_APPSTORE_DOMAINS):
+        return True, f"Gaming / APK aggregator / app store domain: {clean_d}"
+
+    # Gaming & mod APK content regex patterns
+    gaming_patterns = [
+        r'\bbattle royale\b', r'\bfree fire\b', r'\bmod apk\b', r'\bapk download\b',
+        r'\bunlimited diamonds\b', r'\bplay free (online )?games\b', r'\bgame hack\b',
+        r'\bsurvival shooter game\b', r'\baction shooter game\b', r'\bfree fire hack\b',
+        r'\bgarena free fire\b', r'\bdownload apk\b', r'\bapk pure\b', r'\bandroid game\b',
+        r'\bmini games\b', r'\bplay now for free\b'
+    ]
+    raw_comb = f"{raw_url} {text_content}".lower()
+    for gp in gaming_patterns:
+        if re.search(gp, raw_comb):
+            return True, f"Consumer gaming / APK / cheat content detected"
 
     # 2. Article / Blog / Listicle URL Path Regex (Check paths on any domain first)
     if raw_url:
