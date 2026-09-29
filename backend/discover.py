@@ -2107,6 +2107,31 @@ async def stream_discovery(
                                 primary_email = dm["email"]
                                 break
 
+                    # 🌊 OFF-SITE WATERFALL INTELLIGENCE (Fallback when On-Site crawl has 0 DMs)
+                    if domain and len(decision_makers) == 0 and not is_clients_mode:
+                        try:
+                            from offsite_waterfall_engine import execute_offsite_waterfall_intelligence
+                            waterfall_res = await asyncio.wait_for(
+                                execute_offsite_waterfall_intelligence(
+                                    domain=domain,
+                                    company_name=company_name,
+                                    existing_emails=found_emails,
+                                    timeout=8.0
+                                ),
+                                timeout=9.0
+                            )
+                            w_dms = waterfall_res.get("decision_makers", [])
+                            w_emails = waterfall_res.get("emails", [])
+                            if w_dms:
+                                decision_makers.extend(w_dms)
+                                print(f"[OffSiteWaterfall] 🌊 Ingested {len(w_dms)} external decision maker(s) for {domain}")
+                            if w_emails:
+                                for w_em in w_emails:
+                                    if w_em not in found_emails:
+                                        found_emails.append(w_em)
+                        except Exception as wf_err:
+                            logger.debug(f"[OffSiteWaterfall] Execution error for {domain}: {wf_err}")
+
                     if domain and not is_clients_mode:
                         try:
                             from contact_enricher_pro import enrich_company_contacts_advanced

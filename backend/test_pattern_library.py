@@ -9,6 +9,12 @@ import os
 import types
 import tempfile
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # ─── Patch DATABASE to use an in-memory temp DB ─────────────────────────────
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp_db.close()
