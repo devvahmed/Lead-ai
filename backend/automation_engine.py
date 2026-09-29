@@ -468,13 +468,23 @@ async def _autonomous_harvesting_daemon(company_id: int):
                             flush=True
                         )
                     else:
-                        skip_reason = (
-                            f"DM name found ({dm_name}), no pattern/SMTP match"
-                            if dm_name
-                            else f"Only generic email: {primary_email}"
-                        )
-                        print(f"[Automation Daemon] ⏩ Skipped {domain} ({skip_reason})", flush=True)
-                        continue
+                        local_prefix = primary_email.split("@")[0].lower() if "@" in primary_email else ""
+                        commercial_allowed = {
+                            "sales", "investor", "investors", "ir", "partners", "partnerships",
+                            "bd", "business", "commercial", "growth", "inquiries", "enquiries",
+                            "contact", "press", "media", "billing", "finance", "management",
+                            "operations", "director", "rfp", "procurement", "leads"
+                        }
+                        if local_prefix in commercial_allowed or any(local_prefix.startswith(p) for p in commercial_allowed):
+                            print(f"[Automation Daemon] ✓ Retained authentic on-site commercial inbox: {primary_email} (sales/investor/contact)", flush=True)
+                        else:
+                            skip_reason = (
+                                f"DM name found ({dm_name}), no pattern/SMTP match"
+                                if dm_name
+                                else f"Only dead generic email: {primary_email}"
+                            )
+                            print(f"[Automation Daemon] ⏩ Skipped {domain} ({skip_reason})", flush=True)
+                            continue
 
                 # ── SMTP VERIFICATION (Zero Hallucination Rule) ─────────────────
                 # For inferred emails the status is already resolved; for scraped

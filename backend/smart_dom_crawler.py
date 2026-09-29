@@ -80,14 +80,31 @@ DISALLOWED_DOMAINS = {
     "bit.ly", "whatsapp.com", "vimeo.com", "clutch.co", "yelp.com", "wikipedia.org"
 }
 
-# Non-HTML static assets to skip
+# Non-HTML static assets to skip (excluding PDFs which are cracked and parsed for intelligence)
 ASSET_EXTENSIONS = (
-    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico",
     ".zip", ".tar", ".gz", ".rar", ".7z", ".exe", ".dmg", ".apk",
     ".mp4", ".mp3", ".wav", ".avi", ".mov", ".wmv", ".webm",
     ".css", ".js", ".xml", ".json", ".woff", ".woff2", ".ttf", ".eot",
     ".csv", ".xlsx", ".docx", ".pptx"
 )
+
+PDF_EXTENSIONS = (".pdf",)
+
+# Dead / junk generic prefixes strictly filtered out (never surfaced to frontend)
+DEAD_GENERIC_PREFIXES = {
+    "info", "support", "care", "customercare", "customer.care", "help",
+    "helpdesk", "noreply", "no-reply", "donotreply", "privacy", "abuse",
+    "webmaster", "postmaster", "admin"
+}
+
+# High-value commercial & operational prefixes to accept and surface if found on site
+COMMERCIAL_ACCEPTED_PREFIXES = {
+    "sales", "investor", "investors", "ir", "partners", "partnerships",
+    "bd", "business", "commercial", "growth", "inquiries", "enquiries",
+    "contact", "press", "media", "billing", "finance", "management",
+    "operations", "director", "rfp", "procurement", "leads"
+}
 
 # Common homepage root paths
 HOMEPAGE_PATHS = {
@@ -305,6 +322,68 @@ def extract_clean_page_text(html: str) -> str:
         return ""
 
 
+def extract_pdf_text_from_bytes(pdf_bytes: bytes, max_pages: int = 5) -> str:
+    """Extracts readable text from PDF binary bytes using pypdf with robust fallbacks."""
+    if not pdf_bytes or len(pdf_bytes) < 60:
+        return ""
+    try:
+        import io
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        extracted = []
+        for i, page in enumerate(reader.pages[:max_pages]):
+            text = page.extract_text() or ""
+            if text.strip():
+                extracted.append(text.strip())
+        return "\n".join(extracted)
+    except Exception as e:
+        logger.debug(f"[PDFParser] pypdf parsing fallback ({e})")
+        try:
+            # Fallback simple Latin-1 parenthetical text extraction
+            raw_latin = pdf_bytes.decode("latin-1", errors="ignore")
+            snippets = re.findall(r'\(([A-Za-z0-9\s@.,:;\-_/]{4,120})\)', raw_latin)
+            if snippets:
+                return " ".join(snippets[:150])
+        except Exception:
+            pass
+        return ""
+
+
+async def fetch_pdf_text_resilient(url: str, timeout: float = 4.5) -> str:
+    """Fetches PDF binary data from URL and returns extracted clean text."""
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+
+    headers = get_random_headers()
+    # Engine 1: httpx
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True, verify=False) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200 and resp.content and len(resp.content) > 100:
+                return extract_pdf_text_from_bytes(resp.content)
+    except Exception as e:
+        logger.debug(f"[MultiCrawler] httpx PDF fetch error for {url}: {e}")
+
+    # Engine 2: urllib
+    loop = asyncio.get_event_loop()
+    def _urllib_pdf() -> bytes:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX) as resp:
+                return resp.read(5 * 1024 * 1024)
+        except Exception:
+            return b""
+
+    try:
+        raw_b = await loop.run_in_executor(None, _urllib_pdf)
+        if raw_b:
+            return extract_pdf_text_from_bytes(raw_b)
+    except Exception:
+        pass
+
+    return ""
+
+
 # ─── 3. Comprehensive Site Navigation & Link Harvester ─────────────────────────
 
 def extract_all_site_nav_links(
@@ -316,13 +395,13 @@ def extract_all_site_nav_links(
     and sub-menu links across the entire website.
     """
     if not html_content or not base_url:
-        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []}
+        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": [], "pdf_links": []}
 
     try:
         soup = BeautifulSoup(html_content, "html.parser")
     except Exception as e:
         logger.debug(f"[DOMParser] BeautifulSoup parse error: {e}")
-        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []}
+        return {"all_links": [], "nav_links": [], "footer_links": [], "body_links": [], "pdf_links": []}
 
     nav_links: List[Dict[str, str]] = []
     footer_links: List[Dict[str, str]] = []
@@ -392,11 +471,18 @@ def extract_all_site_nav_links(
             body_links.append(item)
             all_links.append(item)
 
+    # 4. Collect On-Site PDF Links
+    pdf_links: List[Dict[str, str]] = [
+        item for item in all_links
+        if item.get("path", "").lower().endswith(".pdf") or item.get("url", "").lower().endswith(".pdf")
+    ]
+
     return {
         "all_links": all_links,
         "nav_links": nav_links,
         "footer_links": footer_links,
-        "body_links": body_links
+        "body_links": body_links,
+        "pdf_links": pdf_links
     }
 
 
@@ -604,16 +690,25 @@ def extract_onsite_contacts_and_decision_makers(
         for em in page_emails:
             em_clean = em.lower().strip().rstrip(".")
             # Filter asset extensions
-            if not any(em_clean.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".js", ".css")):
-                if em_clean not in found_emails:
-                    found_emails.append(em_clean)
-                    # Automatically learn pattern if on company domain
-                    if clean_domain and em_clean.endswith(f"@{clean_domain}"):
-                        try:
-                            from contact_enricher_pro import learn_and_save_pattern
-                            learn_and_save_pattern(em_clean, clean_domain, confidence=90)
-                        except Exception:
-                            pass
+            if any(em_clean.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".js", ".css")):
+                continue
+
+            local_prefix = em_clean.split("@")[0].lower() if "@" in em_clean else ""
+
+            # Filter out dead junk generic prefixes (info@, support@, care@, noreply@, admin@)
+            if local_prefix in DEAD_GENERIC_PREFIXES:
+                continue
+
+            # Accept both personal and high-value commercial/operational emails found on site
+            if em_clean not in found_emails:
+                found_emails.append(em_clean)
+                # Automatically learn pattern if on company domain AND NOT a commercial role inbox
+                if clean_domain and em_clean.endswith(f"@{clean_domain}") and local_prefix not in COMMERCIAL_ACCEPTED_PREFIXES:
+                    try:
+                        from contact_enricher_pro import learn_and_save_pattern
+                        learn_and_save_pattern(em_clean, clean_domain, confidence=90)
+                    except Exception:
+                        pass
 
         # 2. Phone Extraction
         page_phones = phone_pattern.findall(text)
@@ -713,9 +808,9 @@ async def crawl_smart_dom_target(
     Main entry point for Step 6:
     1. Validates base domain and normalizes URL.
     2. Deeply crawls homepage using multi-engine crawler.
-    3. Harvests all internal navigation, header, footer, and menu links.
+    3. Harvests all internal navigation, header, footer, dropdown menus, and internal PDF links.
     4. Submits candidate links to AI to intelligently select top 3-4 overview/team pages.
-    5. Concurrently crawls the AI-chosen subpages.
+    5. Concurrently crawls the AI-chosen subpages and cracked PDF documents.
     6. Extracts authentic on-site decision makers, raw emails, and phone numbers.
     7. Caches result and returns combined text and verified on-site contacts.
     """
@@ -735,7 +830,7 @@ async def crawl_smart_dom_target(
             "source_label": "none",
             "homepage_text": "",
             "pages": {},
-            "dom_links": {"all_links": [], "nav_links": [], "footer_links": [], "body_links": []},
+            "dom_links": {"all_links": [], "nav_links": [], "footer_links": [], "body_links": [], "pdf_links": []},
             "selected_urls": [],
             "onsite_decision_makers": [],
             "onsite_emails": [],
@@ -746,7 +841,7 @@ async def crawl_smart_dom_target(
             _CRAWL_CACHE[clean_domain] = empty_res
         return empty_res
 
-    # Step 3: Harvest All DOM Links (Nav, Header, Footer, Dropdowns, Body)
+    # Step 3: Harvest All DOM Links (Nav, Header, Footer, Dropdowns, Body, PDFs)
     dom_links = extract_all_site_nav_links(homepage_html, homepage_url)
     all_links = dom_links.get("all_links", [])
 
@@ -783,6 +878,35 @@ async def crawl_smart_dom_target(
                         "category": cat_key
                     }
                     fetched_sources.append(path_name)
+
+    # Step 5b: Concurrently Crawl Relevant On-Site PDF Documents (e.g. brochures, profiles, presentations)
+    pdf_candidates = dom_links.get("pdf_links", [])
+    if pdf_candidates:
+        def score_pdf(item: Dict[str, str]) -> float:
+            p = (item.get("path") or "").lower()
+            t = (item.get("text") or "").lower()
+            score = 10.0
+            for kw in ("profile", "company", "about", "overview", "brochure", "team", "leadership", "annual", "report", "presentation", "deck", "contact"):
+                if kw in p or kw in t:
+                    score += 20.0
+            return score
+
+        sorted_pdfs = sorted(pdf_candidates, key=score_pdf, reverse=True)
+        top_pdfs = [p["url"] for p in sorted_pdfs[:2]]
+        if top_pdfs:
+            pdf_tasks = [fetch_pdf_text_resilient(u, timeout=4.0) for u in top_pdfs]
+            pdf_texts = await asyncio.gather(*pdf_tasks, return_exceptions=True)
+            for pdf_url, p_txt in zip(top_pdfs, pdf_texts):
+                if isinstance(p_txt, str) and len(p_txt.strip()) > 80:
+                    pdf_filename = urllib.parse.urlparse(pdf_url).path.split("/")[-1] or "document.pdf"
+                    cat_key = f"pdf_{pdf_filename.replace('.', '_')}"
+                    pages_crawled[cat_key] = {
+                        "url": pdf_url,
+                        "text": p_txt[:4000],
+                        "category": "pdf_document"
+                    }
+                    fetched_sources.append(f"pdf:{pdf_filename}")
+                    logger.info(f"[SmartDOMCrawler] 📄 Cracked PDF document {pdf_filename} ({len(p_txt)} chars)")
 
     # Step 6: On-Site Decision Maker & Contact Extraction (Strict Zero-Fake Policy)
     onsite_contacts = extract_onsite_contacts_and_decision_makers(pages_crawled, clean_domain)
