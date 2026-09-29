@@ -546,25 +546,32 @@ function CompanyCard({
                           {(dm.name || 'DM').slice(0, 1).toUpperCase()}
                         </span>
                         <span className="font-semibold text-[12px] text-on-surface truncate">{dm.name}</span>
-                        {dm.role && (
+                        {(dm.position || dm.role) && (
                           <span className="text-[10px] text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-medium truncate">
-                            {dm.role}
+                            {dm.position || dm.role}
                           </span>
                         )}
                       </div>
-                      {dm.linkedin && (
+                      {((dm.linkedin) || (Array.isArray(dm.social_links) && dm.social_links.length > 0) || (Array.isArray(dm.socialLinks) && dm.socialLinks.length > 0)) && (
                         <a
-                          href={dm.linkedin.startsWith('http') ? dm.linkedin : `https://${dm.linkedin}`}
+                          href={((dm.linkedin || dm.social_links?.[0] || dm.socialLinks?.[0] || '').startsWith('http')) ? (dm.linkedin || dm.social_links?.[0] || dm.socialLinks?.[0]) : `https://${dm.linkedin || dm.social_links?.[0] || dm.socialLinks?.[0]}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-blue-600 hover:text-blue-800 p-0.5 shrink-0"
-                          title="View LinkedIn Profile"
+                          title="View Profile / Social Link"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <span className="material-symbols-outlined text-[14px]">link</span>
                         </a>
                       )}
                     </div>
+
+                    {/* Decision Maker Bio (if publicly available on site) */}
+                    {dm.bio && (
+                      <p className="text-[10px] text-gray-500 line-clamp-2 leading-relaxed px-0.5 italic">
+                        "{dm.bio}"
+                      </p>
+                    )}
 
                     {/* Decision Maker Direct Email */}
                     {dm.email && !isGenericEmail(dm.email) && (

@@ -638,13 +638,13 @@ Do not return any explanations or markdown. Just the JSON array."""
 
 # ─── 5. On-Site Decision Maker & Contact Extractor ────────────────────────────
 
-LEADERSHIP_ROLES = [
+LEADERSHIP_ROLES = sorted([
     "Founder", "Co-Founder", "Chief Executive Officer", "CEO", "President",
     "Owner", "Co-Owner", "Principal", "Managing Partner", "Managing Director",
     "Executive Director", "Chief Technology Officer", "CTO", "Chief Operating Officer",
     "COO", "Vice President", "VP", "Director", "General Manager", "Doctor",
     "Managing Attorney", "Lead Partner"
-]
+], key=len, reverse=True)
 
 def extract_onsite_contacts_and_decision_makers(
     crawled_pages: Dict[str, Dict[str, str]],
@@ -681,6 +681,7 @@ def extract_onsite_contacts_and_decision_makers(
 
     for page_key, page_data in crawled_pages.items():
         text = page_data.get("text", "")
+        page_html = page_data.get("html", "")
         page_url = page_data.get("url", "")
         if not text:
             continue
@@ -689,7 +690,7 @@ def extract_onsite_contacts_and_decision_makers(
         page_emails = email_pattern.findall(text)
         for em in page_emails:
             em_clean = em.lower().strip().rstrip(".")
-            # Filter asset extensions
+            # Filter non-email asset extensions
             if any(em_clean.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".js", ".css")):
                 continue
 
@@ -718,27 +719,141 @@ def extract_onsite_contacts_and_decision_makers(
             if 7 <= len(digits_only) <= 15 and ph_clean not in found_phones:
                 found_phones.append(ph_clean)
 
-        # 3. Decision Maker Name & Role Extraction
-        # Look for patterns like:
-        # "John Smith, Founder & CEO"
-        # "Founder & CEO: John Smith"
-        # "Dr. Sarah Jones - Practice Director"
+        # 3. Structured Decision-Maker Extraction (Name, Position, Bio, Email, Social Links)
+        # Strategy A: Structured DOM Card Extraction (team, leadership, members)
+        if page_html:
+            try:
+                soup = BeautifulSoup(page_html, "html.parser")
+                # Target innermost individual member cards to avoid parent grid collision
+                raw_cards = soup.find_all(
+                    lambda t: t.name in ("div", "li", "article", "section") and (
+                        any(c in str(t.get("class", "")).lower() for c in ("team", "member", "leadership", "person", "profile", "executive", "staff", "bio-card"))
+                    )
+                )
+                card_selectors = [
+                    c for c in raw_cards
+                    if not c.find(lambda sub: sub != c and sub in raw_cards)
+                ]
+
+                for card in card_selectors:
+                    card_text = re.sub(r'\s+', ' ', card.get_text(separator=' ')).strip()
+                    if len(card_text) < 15 or len(card_text) > 2500:
+                        continue
+
+                    role_m = role_regex.search(card_text)
+                    if not role_m:
+                        continue
+                    matched_role = role_m.group(0).strip().title()
+
+                    # Prefer explicit role/position tag text if present on the card
+                    role_tag = card.find(lambda t: t.name in ("span", "p", "div", "h4", "h5", "h6") and (
+                        any(r in str(t.get("class", "")).lower() for r in ("role", "position", "job", "designation", "job-title", "title"))
+                    ))
+                    if role_tag:
+                        tag_role = re.sub(r'\s+', ' ', role_tag.get_text()).strip()
+                        if 3 <= len(tag_role) <= 60 and role_regex.search(tag_role):
+                            matched_role = tag_role.title()
+
+                    name_tag = card.find(["h2", "h3", "h4", "h5", "strong", "b"])
+                    name_cand = ""
+                    if name_tag:
+                        name_cand = re.sub(r'\s+', ' ', name_tag.get_text()).strip()
+                    if not name_cand or len(name_cand.split()) > 4:
+                        name_cand_m = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b', card_text[:role_m.start()] or card_text)
+                        if name_cand_m:
+                            name_cand = name_cand_m.group(1).strip()
+
+                    if name_cand and name_cand.lower() not in seen_dm_names:
+                        tokens = set(name_cand.lower().split())
+                        if not tokens.intersection(invalid_name_words):
+                            seen_dm_names.add(name_cand.lower())
+
+                            # Extract Bio from card
+                            bio_text = ""
+                            bio_p = card.find("p")
+                            if bio_p:
+                                bio_raw = re.sub(r'\s+', ' ', bio_p.get_text()).strip()
+                                if len(bio_raw) > 20 and bio_raw != name_cand and not role_regex.search(bio_raw):
+                                    bio_text = bio_raw[:240]
+                            if not bio_text:
+                                sentences = re.split(r'[.!?]+', card_text)
+                                for s in sentences:
+                                    s_cl = s.strip()
+                                    if len(s_cl) > 25 and name_cand not in s_cl and not role_regex.search(s_cl):
+                                        bio_text = s_cl[:240]
+                                        break
+
+                            # Extract Social / LinkedIn Links
+                            social_links = []
+                            linkedin_url = None
+                            for a in card.find_all("a", href=True):
+                                href = a["href"].strip()
+                                if "linkedin.com/in/" in href or "linkedin.com/pub/" in href:
+                                    fn = name_cand.lower().split()[0]
+                                    if fn in href.lower() or not linkedin_url:
+                                        linkedin_url = href
+                                    if href not in social_links:
+                                        social_links.append(href)
+                                elif any(soc in href for soc in ("twitter.com/", "x.com/", "github.com/")):
+                                    if href not in social_links:
+                                        social_links.append(href)
+
+                            # Extract direct email
+                            card_email = None
+                            for a in card.find_all("a", href=True):
+                                if a["href"].startswith("mailto:"):
+                                    em_cl = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
+                                    if "@" in em_cl and not any(em_cl.startswith(d) for d in DEAD_GENERIC_PREFIXES):
+                                        card_email = em_cl
+                                        break
+                            if not card_email:
+                                name_parts = name_cand.lower().split()
+                                fn = name_parts[0]
+                                ln = name_parts[-1] if len(name_parts) > 1 else ""
+                                for em in found_emails:
+                                    if clean_domain and em.endswith(f"@{clean_domain}"):
+                                        lp = em.split("@")[0].lower()
+                                        if fn in lp or (ln and ln in lp):
+                                            card_email = em
+                                            break
+
+                            if card_email:
+                                try:
+                                    from contact_enricher_pro import learn_and_save_pattern
+                                    learn_and_save_pattern(card_email, clean_domain, confidence=95)
+                                except Exception:
+                                    pass
+
+                            decision_makers.append({
+                                "name": name_cand,
+                                "position": matched_role,
+                                "role": matched_role,
+                                "bio": bio_text,
+                                "email": card_email,
+                                "linkedin": linkedin_url,
+                                "social_links": social_links,
+                                "socialLinks": social_links,
+                                "source": f"onsite_{page_key}",
+                                "page_url": page_url,
+                                "strictly_verified": True if card_email else False
+                            })
+            except Exception as dom_err:
+                logger.debug(f"[DOMCardExtract] Error: {dom_err}")
+
+        # Strategy B: Contextual Text Stream Extraction (Fallback & PDF Pages)
         lines = text.split("\n")
         if len(lines) <= 2:
-            # If plain collapsed text, split by sentences or punctuation
             lines = re.split(r'[.;•|]+', text)
 
-        for line in lines:
+        for idx, line in enumerate(lines):
             line_str = line.strip()
-            if not line_str or len(line_str) > 120:
+            if not line_str or len(line_str) > 140:
                 continue
 
             role_match = role_regex.search(line_str)
             if role_match:
                 matched_role = role_match.group(0).strip().title()
 
-                # Extract person name candidate adjacent to role
-                # Case A: "John Doe, CEO" or "John Doe - Founder"
                 name_candidate = ""
                 before_role = line_str[:role_match.start()].strip(" ,:-|–")
                 after_role = line_str[role_match.end():].strip(" ,:-|–")
@@ -759,7 +874,15 @@ def extract_onsite_contacts_and_decision_makers(
                         if name_candidate.lower() not in seen_dm_names:
                             seen_dm_names.add(name_candidate.lower())
 
-                            # Check if a matching personal email exists in found_emails
+                            # Extract Bio: scan following 1-3 lines for descriptive text
+                            bio_cand = ""
+                            for nxt_line in lines[idx + 1: min(idx + 5, len(lines))]:
+                                n_cl = nxt_line.strip()
+                                if len(n_cl) >= 20 and not role_regex.search(n_cl) and not email_pattern.search(n_cl):
+                                    bio_cand = n_cl[:240]
+                                    break
+
+                            # Check for matching email
                             dm_email = None
                             name_parts = name_candidate.lower().split()
                             first_name = name_parts[0]
@@ -772,7 +895,14 @@ def extract_onsite_contacts_and_decision_makers(
                                         dm_email = em
                                         break
 
-                            # If a personal on-site email is discovered, save to Pattern Library with high confidence
+                            # Check for linkedin in text
+                            linkedin_url = None
+                            social_links = []
+                            lin_m = re.search(r'https?://(?:www\.)?linkedin\.com/in/[a-zA-Z0-9_-]+', text)
+                            if lin_m:
+                                linkedin_url = lin_m.group(0)
+                                social_links.append(linkedin_url)
+
                             if dm_email:
                                 try:
                                     from contact_enricher_pro import learn_and_save_pattern
@@ -782,8 +912,13 @@ def extract_onsite_contacts_and_decision_makers(
 
                             decision_makers.append({
                                 "name": name_candidate,
+                                "position": matched_role,
                                 "role": matched_role,
+                                "bio": bio_cand,
                                 "email": dm_email,
+                                "linkedin": linkedin_url,
+                                "social_links": social_links,
+                                "socialLinks": social_links,
                                 "source": f"onsite_{page_key}",
                                 "page_url": page_url,
                                 "strictly_verified": True if dm_email else False
@@ -852,10 +987,11 @@ async def crawl_smart_dom_target(
         max_pages=max_pages
     )
 
-    pages_crawled: Dict[str, Dict[str, str]] = {
+    pages_crawled: Dict[str, Dict[str, Any]] = {
         "homepage": {
             "url": homepage_url,
             "text": homepage_text,
+            "html": homepage_html,
             "category": "homepage"
         }
     }
@@ -875,6 +1011,7 @@ async def crawl_smart_dom_target(
                     pages_crawled[cat_key] = {
                         "url": sub_url,
                         "text": clean_sub_text,
+                        "html": html_res,
                         "category": cat_key
                     }
                     fetched_sources.append(path_name)
@@ -903,6 +1040,7 @@ async def crawl_smart_dom_target(
                     pages_crawled[cat_key] = {
                         "url": pdf_url,
                         "text": p_txt[:4000],
+                        "html": "",
                         "category": "pdf_document"
                     }
                     fetched_sources.append(f"pdf:{pdf_filename}")

@@ -122,12 +122,13 @@ async def run_tests():
     check("extract_pdf_text_from_bytes executes without crashing", isinstance(parsed_pdf_text, str))
 
     # ─────────────────────────────────────────────────────────
-    # PART 4: Dead Generic Filter vs Commercial Inboxes
+    # PART 4: Structured Profile Extraction (Name, Position, Bio, Email, Social)
     # ─────────────────────────────────────────────────────────
-    print("\nPART 4 — Dead Generic Filter vs Commercial Inboxes:")
+    print("\nPART 4 — Structured Person Profile & Commercial Inbox Extraction:")
     mock_pages = {
         "homepage": {
             "url": "https://ahmed.com",
+            "html": "<p>Welcome to Ahmed Logistics. Call +1 555-234-5678.</p>",
             "text": """Welcome to Ahmed Logistics. Call our office at +1 (555) 234-5678.
             General inquiries: info@ahmed.com
             Customer assistance: support@ahmed.com
@@ -136,12 +137,34 @@ async def run_tests():
         },
         "leadership": {
             "url": "https://ahmed.com/leadership",
+            "html": """
+            <div class="team-grid">
+                <div class="team-member">
+                    <h3>Tariq Ahmed</h3>
+                    <span class="role">Founder & Chief Executive Officer</span>
+                    <p class="bio">Tariq leads enterprise freight technology and global network strategy with 18+ years in logistics.</p>
+                    <a href="mailto:tariq.ahmed@ahmed.com">Email Tariq</a>
+                    <a href="https://www.linkedin.com/in/tariq-ahmed">LinkedIn</a>
+                </div>
+                <div class="team-member">
+                    <h3>Sarah Jenkins</h3>
+                    <span class="role">Vice President of Operations</span>
+                    <p class="bio">Sarah oversees worldwide supply chain execution and multi-modal distribution centers.</p>
+                    <a href="mailto:sarah.jenkins@ahmed.com">Email Sarah</a>
+                    <a href="https://www.linkedin.com/in/sarah-jenkins">LinkedIn</a>
+                </div>
+            </div>
+            """,
             "text": """Leadership Directory:
             Tariq Ahmed, Founder & Chief Executive Officer
+            Tariq leads enterprise freight technology and global network strategy with 18+ years in logistics.
             Direct Email: tariq.ahmed@ahmed.com
+            LinkedIn: https://www.linkedin.com/in/tariq-ahmed
 
             Sarah Jenkins, Vice President of Operations
-            Direct Email: sarah.jenkins@ahmed.com"""
+            Sarah oversees worldwide supply chain execution and multi-modal distribution centers.
+            Direct Email: sarah.jenkins@ahmed.com
+            LinkedIn: https://www.linkedin.com/in/sarah-jenkins"""
         }
     }
     extracted = extract_onsite_contacts_and_decision_makers(mock_pages, "ahmed.com")
@@ -158,8 +181,10 @@ async def run_tests():
     check("Discovered real executive decision makers", len(dms) >= 2)
     ceo = next((d for d in dms if "Tariq Ahmed" in d["name"]), None)
     check("CEO Tariq Ahmed identified", ceo is not None)
-    check("CEO matched role Founder & Chief Executive Officer", "Chief Executive Officer" in ceo.get("role", "") or "Founder" in ceo.get("role", ""))
+    check("CEO position / role captured", "Chief Executive Officer" in (ceo.get("position") or ceo.get("role", "")))
+    check("CEO bio captured from DOM card", len(ceo.get("bio", "")) > 15)
     check("CEO direct email bound", ceo.get("email") == "tariq.ahmed@ahmed.com")
+    check("CEO social / LinkedIn link captured", "linkedin.com/in/tariq-ahmed" in (ceo.get("linkedin") or ""))
     check("CEO marked strictly verified", ceo.get("strictly_verified") is True)
 
     # Verify Pattern Library received the pattern
