@@ -187,6 +187,11 @@ def init_db():
         )
     """)
     _safe_add_column(cursor, "automation_verified_leads", "csv_file_path", "TEXT")
+    _safe_add_column(cursor, "automation_verified_leads", "decision_maker", "TEXT")
+    _safe_add_column(cursor, "automation_verified_leads", "decision_maker_title", "TEXT")
+    _safe_add_column(cursor, "automation_verified_leads", "decision_maker_email", "TEXT")
+    _safe_add_column(cursor, "automation_verified_leads", "all_emails", "TEXT")
+    _safe_add_column(cursor, "automation_verified_leads", "badge", "TEXT")
 
     # Backfill any legacy verified leads to the company's active CSV path
     try:
@@ -1015,18 +1020,48 @@ def get_active_automation_jobs() -> list:
 def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]:
     """
     STRICT EMAIL GATEKEEPER:
-    Saves a newly discovered company ONLY if a genuine verified email was extracted.
+    Saves a newly discovered company ONLY if genuine verified emails exist.
     Atomically:
-      1. Inserts into SQLite `automation_verified_leads`
+      1. Inserts into SQLite `automation_verified_leads` with decision maker details and all emails
       2. Inserts into SQLite `clients` (for regular CRM display)
       3. Appends row to live CSV file in `exports/` directory with immediate flush and fsync!
     """
     import csv
+    import re
 
-    # STRICT GATE: Must have genuine email
+    # Extract emails
     email = (lead.get("email") or "").strip()
-    if not email or "@" not in email or "." not in email:
+    decision_maker = (lead.get("decision_maker") or lead.get("decisionMaker") or lead.get("executive") or "").strip()
+    decision_maker_title = (lead.get("decision_maker_title") or lead.get("decisionMakerTitle") or lead.get("title") or lead.get("role") or "").strip()
+    decision_maker_email = (lead.get("decision_maker_email") or lead.get("decisionMakerEmail") or "").strip()
+
+    # Process all_emails (can be list, string, or set)
+    raw_all_emails = lead.get("all_emails") or lead.get("allEmails") or []
+    if isinstance(raw_all_emails, str):
+        emails_list = [e.strip() for e in re.split(r'[,;]\s*', raw_all_emails) if e.strip() and "@" in e]
+    elif isinstance(raw_all_emails, (list, set, tuple)):
+        emails_list = [str(e).strip() for e in raw_all_emails if str(e).strip() and "@" in str(e)]
+    else:
+        emails_list = []
+
+    # Ensure uniqueness while preserving priority order: DM email first, then primary email, then others
+    ordered_emails: list[str] = []
+    if decision_maker_email and "@" in decision_maker_email and decision_maker_email not in ordered_emails:
+        ordered_emails.append(decision_maker_email)
+    if email and "@" in email and email not in ordered_emails:
+        ordered_emails.append(email)
+    for em in emails_list:
+        if em and "@" in em and em not in ordered_emails:
+            ordered_emails.append(em)
+
+    if not ordered_emails:
         return None
+
+    # Primary email fallback
+    if not email:
+        email = ordered_emails[0]
+
+    all_emails_str = "; ".join(ordered_emails)
 
     name = (lead.get("name") or "Verified Company").strip()
     website = (lead.get("website") or "").strip()
@@ -1036,6 +1071,7 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
     industry = (lead.get("industry") or "B2B Operating Company").strip()
     trust_score = int(lead.get("trustScore") or lead.get("evidenceScore") or 75)
     outreach_angle = (lead.get("outreachAngle") or lead.get("matchReason") or "").strip()
+    badge = (lead.get("badge") or ("Direct Reach / Verified" if decision_maker_email else "Verified Inbox")).strip()
     now_str = datetime.utcnow().isoformat()
 
     conn = get_db_connection()
@@ -1050,11 +1086,11 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
         if not csv_path:
             csv_path = os.path.join(exports_dir, f"leads_automation_company_{company_id}.csv")
 
-        # Check if email was already verified in THIS active CSV run
+        # Check if company domain or primary email was already verified in THIS active CSV run
         existing = cursor.execute("""
             SELECT id FROM automation_verified_leads
-            WHERE company_id = ? AND csv_file_path = ? AND LOWER(email) = LOWER(?)
-        """, (company_id, csv_path, email)).fetchone()
+            WHERE company_id = ? AND csv_file_path = ? AND (LOWER(email) = LOWER(?) OR LOWER(domain) = LOWER(?))
+        """, (company_id, csv_path, email, domain)).fetchone()
 
         if existing:
             return None
@@ -1063,10 +1099,12 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
         cursor.execute("""
             INSERT INTO automation_verified_leads (
                 company_id, name, website, domain, email, phone,
-                country, industry, trust_score, outreach_angle, created_at, csv_file_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                country, industry, trust_score, outreach_angle, created_at, csv_file_path,
+                decision_maker, decision_maker_title, decision_maker_email, all_emails, badge
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (company_id, name, website, domain, email, phone,
-              country, industry, trust_score, outreach_angle, now_str, csv_path))
+              country, industry, trust_score, outreach_angle, now_str, csv_path,
+              decision_maker, decision_maker_title, decision_maker_email, all_emails_str, badge))
         conn.commit()
 
         # 2. Also save to regular clients table so user sees it in main CRM
@@ -1083,17 +1121,20 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
             company_id=company_id
         )
 
-        # 3. Crash-proof live CSV append to active CSV file
+        # 3. Crash-proof live CSV append to active CSV file (12 columns)
         file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not file_exists:
                 writer.writerow([
-                    "Company Name", "Website", "Verified Email", "Phone",
+                    "Company Name", "Website", "Decision Maker", "Title",
+                    "Decision Maker Email", "All Emails", "Phone",
                     "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
                 ])
             writer.writerow([
-                name, website, email, phone, country, industry, trust_score, outreach_angle, now_str
+                name, website, decision_maker, decision_maker_title,
+                decision_maker_email, all_emails_str, phone,
+                country, industry, trust_score, outreach_angle, now_str
             ])
             f.flush()
             os.fsync(f.fileno())
@@ -1112,6 +1153,11 @@ def save_automation_verified_lead(company_id: int, lead: dict) -> Optional[dict]
             "website": website,
             "domain": domain,
             "email": email,
+            "decision_maker": decision_maker,
+            "decision_maker_title": decision_maker_title,
+            "decision_maker_email": decision_maker_email,
+            "all_emails": ordered_emails,
+            "badge": badge,
             "phone": phone,
             "country": country,
             "industry": industry,

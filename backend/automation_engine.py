@@ -25,6 +25,7 @@ from datetime import datetime
 import database
 from dynamic_industry_generator import get_next_discovery_batch
 from discover import generate_industry_search_queries, clean_domain
+from offsite_waterfall_engine import execute_offsite_waterfall_intelligence
 from multi_source_ingestion import ingest_all_sources
 from junk_firewall import is_deterministic_junk
 from geo_lock_engine import verify_deterministic_geo
@@ -35,10 +36,12 @@ from email_outreach import (
     is_valid_email
 )
 from smtp_verify import verify_email_smtp
+from smart_dom_crawler import crawl_smart_dom_target
 from contact_enricher_pro import (
     is_generic_email,
     learn_and_save_pattern,
     infer_decision_maker_email,
+    enrich_company_contacts_advanced,
 )
 
 logger = logging.getLogger("automation_engine")
@@ -128,7 +131,8 @@ async def start_automation(
             with open(new_csv_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "Company Name", "Website", "Verified Email", "Phone",
+                    "Company Name", "Website", "Decision Maker", "Title",
+                    "Decision Maker Email", "All Emails", "Phone",
                     "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
                 ])
 
@@ -155,7 +159,8 @@ async def start_automation(
                     with open(current_csv, "w", newline="", encoding="utf-8") as f:
                         writer = csv.writer(f)
                         writer.writerow([
-                            "Company Name", "Website", "Verified Email", "Phone",
+                            "Company Name", "Website", "Decision Maker", "Title",
+                            "Decision Maker Email", "All Emails", "Phone",
                             "Country", "Industry", "Trust Score", "Outreach Pitch Angle", "Discovered At"
                         ])
 
@@ -401,34 +406,60 @@ async def _autonomous_harvesting_daemon(company_id: int):
                 if not is_local and geo_conf == 0.0 and "Foreign ccTLD" in geo_reason:
                     continue
 
-                # Gate 3: Live Website & Subpage Crawl
+                # Gate 3: Live Smart DOM Deep Crawl & Executive Discovery
                 company_name = cand.author_or_company or domain.split('.')[0].capitalize()
-                scraped_text = ""
-                source_label = "homepage"
-                try:
-                    scraped_text, source_label = await fetch_url_content_with_subpages(url, timeout=3.5)
-                except Exception:
-                    pass
-
-                # Gate 4: Contact Extraction
                 cand_snippet = getattr(cand, "snippet", None) or getattr(cand, "text_content", "") or ""
-                contacts = extract_regex_contacts(scraped_text or cand_snippet, url)
-                found_emails = contacts.get("emails", [])
-                found_phones = contacts.get("phones", [])
-                primary_email = found_emails[0] if found_emails else None
-                primary_phone = found_phones[0] if found_phones else None
+                
+                found_emails: List[str] = []
+                found_phones: List[str] = []
+                decision_makers: List[dict] = []
+                scraped_text: str = ""
+
+                try:
+                    crawl_res = await asyncio.wait_for(
+                        crawl_smart_dom_target(domain=domain, homepage_url=url, max_pages=4),
+                        timeout=7.0
+                    )
+                    if crawl_res:
+                        found_emails.extend(crawl_res.get("onsite_emails", []))
+                        found_phones.extend(crawl_res.get("onsite_phones", []))
+                        decision_makers.extend(crawl_res.get("onsite_decision_makers", []))
+                        scraped_text = crawl_res.get("merged_text", "")
+                except Exception as dom_err:
+                    logger.debug(f"[Automation Daemon] Smart DOM error for {domain}: {dom_err}")
+
+                # Fallback to subpage fetcher & regex extractor if Smart DOM found no emails
+                if not found_emails:
+                    try:
+                        sub_text, _ = await fetch_url_content_with_subpages(url, timeout=3.5)
+                        if sub_text:
+                            scraped_text = (scraped_text + " " + sub_text).strip()
+                            contacts = extract_regex_contacts(sub_text, url)
+                            for em in contacts.get("emails", []):
+                                if em not in found_emails:
+                                    found_emails.append(em)
+                            for ph in contacts.get("phones", []):
+                                if ph not in found_phones:
+                                    found_phones.append(ph)
+                    except Exception:
+                        pass
 
                 # Deep Contact Prober Fallback (probes /pages/contact-us, /contact, etc.)
-                if not primary_email:
+                if not found_emails:
                     try:
                         deep_res = await fetch_dedicated_contact_emails(url)
                         if deep_res.get("emails"):
-                            found_emails = deep_res["emails"]
-                            primary_email = found_emails[0]
-                        if deep_res.get("phones") and not primary_phone:
-                            primary_phone = deep_res["phones"][0]
+                            for em in deep_res["emails"]:
+                                if em not in found_emails:
+                                    found_emails.append(em)
+                        if deep_res.get("phones"):
+                            for ph in deep_res["phones"]:
+                                if ph not in found_phones:
+                                    found_phones.append(ph)
                     except Exception:
                         pass
+
+                primary_phone = found_phones[0] if found_phones else None
 
                 # Update scanned metric
                 database.update_automation_job(
@@ -444,118 +475,151 @@ async def _autonomous_harvesting_daemon(company_id: int):
                     country=active_country
                 )
 
-                # ── STRICT EMAIL GATEKEEPER (Zero Hallucination Rule) ──────────
-                # Companies without real verified emails are completely skipped from CSV!
-                if not primary_email or not is_valid_email(primary_email):
-                    print(f"[Automation Daemon] ⏩ Skipped {domain} (Legitimate operating business, but no contact email on website).", flush=True)
-                    continue
-
-                # ── GENERIC EMAIL RESCUE GATE ──────────────────────────────────
-                # Generic email found (info@, hello@, sales@, …).
-                # Before skipping, try to infer a decision-maker email via Pattern Library.
-                inferred: Optional[dict] = None
-                if is_generic_email(primary_email):
-                    dm_name = await find_decision_maker_name(domain, company_name)
-                    if dm_name:
-                        inferred = infer_decision_maker_email(dm_name, domain)
-
-                    if inferred:
-                        # Override primary_email with the inferred address
-                        primary_email = inferred["email"]
-                        print(
-                            f"[Automation Daemon] 🔍 Inferred DM email for {domain}: "
-                            f"{primary_email} (name={dm_name}, pattern={inferred['pattern']})",
-                            flush=True
+                # Gate 4: Off-Site Waterfall Intelligence Engine (if no leadership found on-site)
+                if not decision_makers:
+                    try:
+                        wf_res = await asyncio.wait_for(
+                            execute_offsite_waterfall_intelligence(
+                                domain=domain,
+                                company_name=company_name,
+                                existing_emails=found_emails
+                            ),
+                            timeout=8.0
                         )
-                    else:
-                        local_prefix = primary_email.split("@")[0].lower() if "@" in primary_email else ""
-                        commercial_allowed = {
-                            "sales", "investor", "investors", "ir", "partners", "partnerships",
-                            "bd", "business", "commercial", "growth", "inquiries", "enquiries",
-                            "contact", "press", "media", "billing", "finance", "management",
-                            "operations", "director", "rfp", "procurement", "leads"
-                        }
-                        if local_prefix in commercial_allowed or any(local_prefix.startswith(p) for p in commercial_allowed):
-                            print(f"[Automation Daemon] ✓ Retained authentic on-site commercial inbox: {primary_email} (sales/investor/contact)", flush=True)
-                        else:
-                            skip_reason = (
-                                f"DM name found ({dm_name}), no pattern/SMTP match"
-                                if dm_name
-                                else f"Only dead generic email: {primary_email}"
-                            )
-                            print(f"[Automation Daemon] ⏩ Skipped {domain} ({skip_reason})", flush=True)
-                            continue
+                        wf_dms = wf_res.get("decision_makers", [])
+                        wf_emails = wf_res.get("emails", [])
+                        if wf_dms:
+                            decision_makers.extend(wf_dms)
+                        if wf_emails:
+                            for wfe in wf_emails:
+                                if wfe not in found_emails:
+                                    found_emails.append(wfe)
+                    except Exception as wf_err:
+                        logger.debug(f"[Automation Daemon] Waterfall error for {domain}: {wf_err}")
 
-                # ── SMTP VERIFICATION (Zero Hallucination Rule) ─────────────────
-                # For inferred emails the status is already resolved; for scraped
-                # personal emails we run a fresh SMTP handshake here.
-                if inferred:
-                    smtp_status = inferred["status"]
+                # Gate 5: Contact Enricher Pro (Pattern learning, inference, leadership email synthesis)
+                try:
+                    pro_intel = await asyncio.wait_for(
+                        enrich_company_contacts_advanced(
+                            domain=domain,
+                            company_name=company_name,
+                            existing_emails=found_emails,
+                            website_text=scraped_text or cand_snippet,
+                            timeout=10.0
+                        ),
+                        timeout=11.0
+                    )
+                    if pro_intel:
+                        enriched_dms = pro_intel.get("decision_makers", [])
+                        seen_dm_names = {dm.get("name", "").lower() for dm in decision_makers if dm.get("name")}
+                        for edm in enriched_dms:
+                            if edm.get("name") and edm["name"].lower() not in seen_dm_names:
+                                decision_makers.append(edm)
+                                seen_dm_names.add(edm["name"].lower())
+
+                        for em in pro_intel.get("all_emails", []):
+                            if em not in found_emails:
+                                found_emails.append(em)
+                except Exception as pro_err:
+                    logger.debug(f"[Automation Daemon] Contact enricher pro error for {domain}: {pro_err}")
+
+                # Select and resolve best decision maker
+                top_dm = None
+                if decision_makers:
+                    top_dm = next((dm for dm in decision_makers if dm.get("email") and dm.get("strictly_verified")), None)
+                    if not top_dm:
+                        top_dm = next((dm for dm in decision_makers if dm.get("email")), None)
+                    if not top_dm:
+                        top_dm = decision_makers[0]
+
+                dm_name = (top_dm.get("name") or "").strip() if top_dm else ""
+                dm_title = (top_dm.get("role") or top_dm.get("title") or "").strip() if top_dm else ""
+                dm_email = (top_dm.get("email") or "").strip() if top_dm else ""
+
+                # If we have a decision maker name but no verified email, try pattern inference
+                inferred_info: Optional[dict] = None
+                if dm_name and not dm_email:
+                    inferred_info = infer_decision_maker_email(dm_name, domain)
+                    if inferred_info and inferred_info.get("email") and inferred_info.get("status") in ("valid", "catch_all"):
+                        dm_email = inferred_info["email"]
+                        if dm_email not in found_emails:
+                            found_emails.insert(0, dm_email)
+
+                # Filter and authenticate all collected emails (Strict Zero-Hallucination Gate)
+                valid_emails: List[str] = []
+                for em in found_emails:
+                    em_clean = em.strip()
+                    if is_valid_email(em_clean) and em_clean not in valid_emails:
+                        valid_emails.append(em_clean)
+
+                if not valid_emails:
+                    print(f"[Automation Daemon] ⏩ Skipped {domain} (Operating business, but no authentic contact email on website or offsite).", flush=True)
+                    continue
+
+                # Primary email selection: direct DM email if available, else first valid email
+                if dm_email and dm_email in valid_emails:
+                    primary_email = dm_email
+                elif valid_emails:
+                    primary_email = valid_emails[0]
                 else:
-                    smtp_result = verify_email_smtp(primary_email)
-                    smtp_status = smtp_result.get("status")
+                    continue
 
-                # Drop invalid emails
+                # Filter out dead/invalid domains via SMTP check if primary is unverified
+                if inferred_info:
+                    smtp_status = inferred_info["status"]
+                else:
+                    smtp_res = verify_email_smtp(primary_email)
+                    smtp_status = smtp_res.get("status")
+
                 if smtp_status in ("invalid", "invalid_mx"):
-                    print(f"[Automation Daemon] ❌ Dropped {domain} (Email invalid: {primary_email}, status: {smtp_status})", flush=True)
+                    print(f"[Automation Daemon] ❌ Dropped {domain} (Primary email invalid: {primary_email}, status: {smtp_status})", flush=True)
                     continue
 
-                # Catch-all: only save if it came from pattern inference (badge = Likely unverified)
-                if smtp_status == "catch_all" and not inferred:
-                    print(f"[Automation Daemon] ⚠️ Catch-all detected for {domain} ({primary_email}) — skipping", flush=True)
-                    continue
-
-                # Unknown SMTP status — skip unless inferred (pattern-backed)
-                if smtp_status not in ("valid", "catch_all") and not inferred:
-                    print(f"[Automation Daemon] ⏩ Skipped {domain} (SMTP status: {smtp_status})", flush=True)
-                    continue
-
-                if smtp_status not in ("valid", "catch_all"):
-                    print(f"[Automation Daemon] ⏩ Skipped {domain} (SMTP status: {smtp_status})", flush=True)
-                    continue
-
-                # ── Pattern Learning: Personal email found — teach the Pattern Library ──
-                if not inferred and not is_generic_email(primary_email):
+                # Teach pattern library if authentic personal email was found
+                if not inferred_info and not is_generic_email(primary_email):
                     learn_and_save_pattern(primary_email, domain, confidence=85)
 
-                # ── Determine badge based on email origin + SMTP result ─────────────
-                if inferred:
-                    badge = inferred["badge"]   # "Direct Reach / Verified" or "Likely (unverified)"
-                else:
+                # Determine badge
+                if dm_email:
                     badge = "Direct Reach / Verified"
+                elif any(not is_generic_email(e) for e in valid_emails):
+                    badge = "Team Verified"
+                else:
+                    badge = "Commercial / Contact"
 
                 # ── Genuine Verified Lead Found! Atomically Save to SQLite & Live CSV ──
                 lead_payload = {
-                    "name":    company_name,
+                    "name": company_name,
                     "website": url,
-                    "domain":  domain,
-                    "email":   primary_email,
-                    "phone":   primary_phone,
+                    "domain": domain,
+                    "email": primary_email,
+                    "decision_maker": dm_name,
+                    "decision_maker_title": dm_title,
+                    "decision_maker_email": dm_email,
+                    "all_emails": valid_emails,
+                    "phone": primary_phone,
                     "country": active_country,
                     "industry": current_niche,
-                    "trustScore": max(min_trust, 82),
-                    "outreachAngle": f"Identified operating enterprise in {current_niche}. Tailored offering: {target_service}.",
-                    "smtp_status":  smtp_status,
-                    "smtp_verified": smtp_status == "valid",
-                    "badge":  badge,
-                    "inferred_from_pattern": bool(inferred),
-                    "pattern": inferred["pattern"] if inferred else None,
+                    "trustScore": max(min_trust, 85 if dm_email else 76),
+                    "outreachAngle": (
+                        f"Identified operating enterprise in {current_niche}. "
+                        f"{'Executive reach: ' + dm_name + ' (' + dm_title + '). ' if dm_name else ''}"
+                        f"Targeted offering: {target_service}."
+                    ),
+                    "badge": badge,
+                    "inferred_from_pattern": bool(inferred_info),
+                    "pattern": inferred_info["pattern"] if inferred_info else None,
                 }
 
                 saved = database.save_automation_verified_lead(company_id, lead_payload)
                 if saved:
-                    if inferred:
-                        print(
-                            f"[Automation Daemon] 🎯 INFERRED + SMTP-VERIFIED → {company_name} ({domain}) | "
-                            f"Email: {primary_email} | Pattern: {inferred['pattern']} | Badge: {badge} | Appended to CSV.",
-                            flush=True
-                        )
-                    else:
-                        print(
-                            f"[Automation Daemon] 🎯 SMTP-VERIFIED LEAD → {company_name} ({domain}) | "
-                            f"Email: {primary_email} | SMTP: {smtp_status} | Appended to CSV.",
-                            flush=True
-                        )
+                    print(
+                        f"[Automation Daemon] 🎯 VERIFIED LEAD SAVED → {company_name} ({domain}) | "
+                        f"DM: {dm_name or 'N/A'} ({dm_title or 'Leadership'}) | "
+                        f"DM Email: {dm_email or 'None'} | All Emails ({len(valid_emails)}): {'; '.join(valid_emails[:3])} | "
+                        f"Badge: {badge} | Appended to CSV.",
+                        flush=True
+                    )
 
                 # Polite pause between candidate probes
                 await asyncio.sleep(1.5)

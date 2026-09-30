@@ -24,6 +24,10 @@ interface AutomationStatusResponse {
     website: string;
     domain: string;
     email: string;
+    decision_maker?: string;
+    decision_maker_title?: string;
+    decision_maker_email?: string;
+    all_emails?: string | string[];
     phone?: string;
     country: string;
     industry: string;
@@ -932,7 +936,8 @@ export default function AutomationPage() {
                 <thead className="border-b border-slate-800 bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-400">
                   <tr>
                     <th className="py-3 px-4">Company Name</th>
-                    <th className="py-3 px-4">Verified Email</th>
+                    <th className="py-3 px-4">Decision Maker</th>
+                    <th className="py-3 px-4">Verified Emails</th>
                     <th className="py-3 px-4">Phone</th>
                     <th className="py-3 px-4">Country & Industry</th>
                     <th className="py-3 px-4">Trust Score</th>
@@ -947,49 +952,120 @@ export default function AutomationPage() {
                           href={lead.website}
                           target="_blank"
                           rel="noreferrer"
-                          className="hover:text-emerald-400 hover:underline"
+                          className="hover:text-emerald-400 hover:underline flex items-center gap-1.5"
                         >
-                          {lead.name}
+                          <span>{lead.name}</span>
+                          <span className="text-[10px] text-slate-500">↗</span>
                         </a>
                       </td>
-                      <td className="py-3 px-4">
-                        {/* Email + Badge */}
-                        <div className="flex flex-col gap-1.5">
-                          <span className="font-bold text-emerald-400 font-mono text-xs">
-                            {lead.email}
-                          </span>
-                          <div className="flex flex-wrap items-center gap-1">
-                            {/* Primary badge */}
-                            {(() => {
-                              const badge = lead.badge || 'Direct Reach / Verified';
-                              const isVerified = badge === 'Direct Reach / Verified';
-                              const isLikely   = badge === 'Likely (unverified)';
-                              const isGeneral  = badge === 'General Contact';
-                              return (
-                                <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
-                                  isVerified ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
-                                  isLikely   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
-                                  isGeneral  ? 'bg-slate-700/60 text-slate-400 border border-slate-600/50' :
-                                               'bg-slate-700/60 text-slate-400 border border-slate-600/50'
-                                }`}>
-                                  <span>{isVerified ? '✅' : isLikely ? '⚠️' : '📧'}</span>
-                                  {badge}
-                                </span>
-                              );
-                            })()}
-                            {/* Inferred tag */}
-                            {lead.inferred_from_pattern && (
-                              <span
-                                className="inline-flex items-center gap-0.5 rounded-md bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300"
-                                title={lead.pattern ? `Pattern: ${lead.pattern}` : 'Inferred from pattern library'}
-                              >
-                                <span className="text-[9px]">🔮</span>
-                                Inferred{lead.pattern ? ` (${lead.pattern})` : ''}
+
+                      {/* Decision Maker Column */}
+                      <td className="py-3 px-4 font-sans">
+                        {lead.decision_maker ? (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5 font-bold text-white text-xs">
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] border border-emerald-500/30">
+                                👤
+                              </span>
+                              <span>{lead.decision_maker}</span>
+                            </div>
+                            {lead.decision_maker_title && (
+                              <span className="text-[11px] font-medium text-emerald-400/90 pl-6">
+                                {lead.decision_maker_title}
                               </span>
                             )}
+                            {lead.decision_maker_email && (
+                              <div className="pl-6 pt-0.5">
+                                <span className="inline-flex items-center gap-1 rounded bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                                  <span>🎯</span>
+                                  <span>{lead.decision_maker_email}</span>
+                                </span>
+                              </div>
+                            )}
                           </div>
-                        </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
+                            <span className="opacity-60">🏢</span>
+                            <span>Commercial Team</span>
+                          </div>
+                        )}
                       </td>
+
+                      {/* Multiple Verified Emails Column */}
+                      <td className="py-3 px-4">
+                        {(() => {
+                          let emailList: string[] = [];
+                          if (Array.isArray(lead.all_emails)) {
+                            emailList = lead.all_emails;
+                          } else if (typeof lead.all_emails === 'string' && lead.all_emails.trim()) {
+                            emailList = lead.all_emails.split(/[;,]\s*/).map(e => e.trim()).filter(Boolean);
+                          }
+                          if (emailList.length === 0 && lead.email) {
+                            emailList = [lead.email];
+                          }
+                          if (lead.decision_maker_email && !emailList.includes(lead.decision_maker_email)) {
+                            emailList.unshift(lead.decision_maker_email);
+                          }
+                          const uniqueEmails = Array.from(new Set(emailList));
+
+                          return (
+                            <div className="flex flex-col gap-1.5 max-w-[280px]">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {uniqueEmails.map((em, eIdx) => {
+                                  const isDmEmail = em.toLowerCase() === (lead.decision_maker_email || '').toLowerCase();
+                                  const isPrimary = em.toLowerCase() === (lead.email || '').toLowerCase();
+                                  return (
+                                    <span
+                                      key={eIdx}
+                                      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-[11px] font-semibold border ${
+                                        isDmEmail
+                                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/40'
+                                          : isPrimary
+                                          ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
+                                          : 'bg-slate-800/80 text-slate-300 border-slate-700/60'
+                                      }`}
+                                      title={isDmEmail ? 'Direct Executive Inbox' : 'Authentic Business Inbox'}
+                                    >
+                                      <span>{isDmEmail ? '🎯' : '✉️'}</span>
+                                      <span className="truncate max-w-[180px]">{em}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                                {uniqueEmails.length > 1 && (
+                                  <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 border border-slate-700">
+                                    {uniqueEmails.length} emails
+                                  </span>
+                                )}
+                                {(() => {
+                                  const badge = lead.badge || (lead.decision_maker_email ? 'Direct Reach / Verified' : 'Verified Inbox');
+                                  const isVerified = badge.includes('Direct') || badge.includes('Verified');
+                                  return (
+                                    <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                      isVerified ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                    }`}>
+                                      <span>{isVerified ? '✅' : '📧'}</span>
+                                      <span>{badge}</span>
+                                    </span>
+                                  );
+                                })()}
+                                {lead.inferred_from_pattern && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 rounded bg-violet-500/20 border border-violet-500/40 px-1.5 py-0.5 text-[9px] font-semibold text-violet-300"
+                                    title={lead.pattern ? `Pattern: ${lead.pattern}` : 'Inferred via Pattern Engine'}
+                                  >
+                                    <span>🔮</span>
+                                    <span>Pattern</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </td>
+
                       <td className="py-3 px-4 text-slate-400">
                         {lead.phone || '—'}
                       </td>

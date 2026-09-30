@@ -1855,7 +1855,7 @@ async def api_download_automation_csv(
 
     if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            f.write("Company Name,Website,Verified Email,Phone,Country,Industry,Trust Score,Outreach Pitch Angle,Discovered At\n")
+            f.write("Company Name,Website,Decision Maker,Title,Decision Maker Email,All Emails,Phone,Country,Industry,Trust Score,Outreach Pitch Angle,Discovered At\n")
 
     filename = os.path.basename(csv_path)
     if not filename.endswith(".csv"):
